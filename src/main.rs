@@ -1,8 +1,15 @@
-use anyhow::Result;
+use std::path::Path;
+
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use tracing::info;
 
-use mitm2openapi::cli::{Cli, Command};
+use mitm2openapi::builder::{self, OpenApiBuilder};
+use mitm2openapi::cli::{Cli, Command, InputFormat};
+use mitm2openapi::har_reader;
+use mitm2openapi::mitmproxy_reader;
+use mitm2openapi::output;
+use mitm2openapi::types::{CapturedRequest, Config};
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -12,24 +19,181 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Discover(args) => {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting discovery");
+
+            let requests = read_input(&args.input, &args.format)?;
             eprintln!(
-                "discover: input={}, output={}, prefix={}",
-                args.input.display(),
-                args.output.display(),
-                args.prefix
+                "Read {} request(s) from {}",
+                requests.len(),
+                args.input.display()
+            );
+
+            let templates = builder::discover_paths(&requests, &args.prefix, None);
+
+            let merged = if args.output.exists() {
+                let existing = load_templates(&args.output)
+                    .context("failed to load existing templates file")?;
+                merge_templates(&existing, &templates)
+            } else {
+                templates
+            };
+
+            let yaml = output::templates_to_yaml(&merged)?;
+            output::write_yaml(&yaml, &args.output)?;
+
+            eprintln!(
+                "Discovered {} path template(s), written to {}",
+                merged.len(),
+                args.output.display()
             );
         }
         Command::Generate(args) => {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting generation");
+
+            let requests = read_input(&args.input, &args.format)?;
             eprintln!(
-                "generate: input={}, output={}, templates={}, prefix={}",
-                args.input.display(),
-                args.output.display(),
-                args.templates.display(),
-                args.prefix
+                "Read {} request(s) from {}",
+                requests.len(),
+                args.input.display()
+            );
+
+            let all_templates = load_templates(&args.templates).with_context(|| {
+                format!("failed to load templates from {}", args.templates.display())
+            })?;
+            let active_templates: Vec<String> = all_templates
+                .into_iter()
+                .filter(|t| !t.starts_with("ignore:"))
+                .collect();
+
+            if active_templates.is_empty() {
+                bail!(
+                    "No active templates found in {}. Remove the 'ignore:' prefix from paths you want to include.",
+                    args.templates.display()
+                );
+            }
+
+            eprintln!("Using {} active template(s)", active_templates.len());
+
+            let config = Config {
+                prefix: args.prefix.clone(),
+                param_regex: args.param_regex.clone(),
+                openapi_title: args.openapi_title.clone(),
+                openapi_version: args.openapi_version.clone(),
+                exclude_headers: parse_comma_list(&args.exclude_headers),
+                exclude_cookies: parse_comma_list(&args.exclude_cookies),
+                include_headers: args.include_headers,
+                ignore_images: args.ignore_images,
+                suppress_params: args.suppress_params,
+                tags_overrides: args.tags_overrides.clone(),
+            };
+
+            let mut builder = OpenApiBuilder::new(&args.prefix, &config, active_templates);
+            builder.add_requests(&requests);
+            let spec = builder.build();
+
+            let path_count = spec.paths.paths.len();
+            let yaml = output::spec_to_yaml(&spec)?;
+            output::write_yaml(&yaml, &args.output)?;
+
+            eprintln!(
+                "Generated OpenAPI spec with {} path(s), written to {}",
+                path_count,
+                args.output.display()
             );
         }
     }
 
     Ok(())
+}
+
+fn read_input(path: &Path, format: &InputFormat) -> Result<Vec<Box<dyn CapturedRequest>>> {
+    match format {
+        InputFormat::Mitmproxy => {
+            if path.is_dir() {
+                mitmproxy_reader::read_mitmproxy_dir(path)
+                    .context("failed to read mitmproxy directory")
+            } else {
+                mitmproxy_reader::read_mitmproxy_file(path).context("failed to read mitmproxy file")
+            }
+        }
+        InputFormat::Har => har_reader::read_har_file(path).context("failed to read HAR file"),
+        InputFormat::Auto => {
+            if path.is_dir() {
+                let mitmproxy_result = mitmproxy_reader::read_mitmproxy_dir(path);
+                let har_result = har_reader::read_har_file(path);
+
+                match (mitmproxy_result, har_result) {
+                    (Ok(mut m), Ok(mut h)) => {
+                        m.append(&mut h);
+                        Ok(m)
+                    }
+                    (Ok(m), Err(_)) => Ok(m),
+                    (Err(_), Ok(h)) => Ok(h),
+                    (Err(e1), Err(_e2)) => {
+                        Err(e1).context("failed to read directory as mitmproxy or HAR")
+                    }
+                }
+            } else if mitmproxy_reader::mitmproxy_heuristic(path) {
+                mitmproxy_reader::read_mitmproxy_file(path)
+                    .context("detected as mitmproxy format but failed to parse")
+            } else if har_reader::har_heuristic(path) {
+                har_reader::read_har_file(path)
+                    .context("detected as HAR format but failed to parse")
+            } else {
+                bail!(
+                    "Cannot auto-detect format for '{}'. Use --format to specify.",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+fn load_templates(path: &Path) -> Result<Vec<String>> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read templates file: {}", path.display()))?;
+    let yaml: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&content).context("failed to parse templates YAML")?;
+
+    let templates = yaml
+        .get("x-path-templates")
+        .and_then(|v| v.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(templates)
+}
+
+fn merge_templates(existing: &[String], new: &[String]) -> Vec<String> {
+    use std::collections::BTreeSet;
+
+    let existing_paths: BTreeSet<String> = existing
+        .iter()
+        .map(|t| t.strip_prefix("ignore:").unwrap_or(t).to_string())
+        .collect();
+
+    let mut merged: Vec<String> = existing.to_vec();
+
+    for t in new {
+        let bare = t.strip_prefix("ignore:").unwrap_or(t);
+        if !existing_paths.contains(bare) {
+            merged.push(t.clone());
+        }
+    }
+
+    merged
+}
+
+fn parse_comma_list(opt: &Option<String>) -> Vec<String> {
+    opt.as_deref()
+        .map(|s| {
+            s.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
