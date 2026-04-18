@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod error;
 pub mod har_reader;
+pub mod mitmproxy_reader;
 pub mod params;
 pub mod path_matching;
 pub mod schema;
