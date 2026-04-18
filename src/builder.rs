@@ -11,6 +11,45 @@ use crate::path_matching;
 use crate::schema;
 use crate::types::{CapturedRequest, Config};
 
+/// Discover unique API paths from captured requests and generate templates.
+/// Each template is prefixed with "ignore:" — the user removes the prefix for paths they want.
+/// Parameterized paths (with numeric/UUID segments) get suggestions like "/users/{id}".
+pub fn discover_paths(
+    requests: &[Box<dyn CapturedRequest>],
+    prefix: &str,
+    custom_regex: Option<&regex::Regex>,
+) -> Vec<String> {
+    let mut seen_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    for req in requests {
+        let url = req.get_url();
+        if !url.starts_with(prefix) {
+            continue;
+        }
+        let raw_path = &url[prefix.len()..];
+        let path_no_query = raw_path.split('?').next().unwrap_or(raw_path);
+        let path = if path_no_query.starts_with('/') {
+            path_no_query.to_string()
+        } else {
+            format!("/{}", path_no_query)
+        };
+        seen_paths.insert(path);
+    }
+
+    let paths_vec: Vec<String> = seen_paths.iter().cloned().collect();
+    let suggested = path_matching::suggest_param_templates(&paths_vec, custom_regex);
+
+    let mut all: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for p in &paths_vec {
+        all.insert(format!("ignore:{}", p));
+    }
+    for s in &suggested {
+        all.insert(format!("ignore:{}", s));
+    }
+
+    all.into_iter().collect()
+}
+
 /// Assembles an OpenAPI 3.0 spec from captured HTTP requests.
 pub struct OpenApiBuilder {
     prefix: String,
@@ -794,5 +833,62 @@ mod tests {
         let spec = builder.build();
 
         assert!(spec.paths.paths.contains_key("/users"));
+    }
+
+    // ── discover_paths ─────────────────────────────────────────────
+
+    #[test]
+    fn discover_empty_requests() {
+        let result = discover_paths(&[], "https://api.example.com", None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn discover_single_get() {
+        let requests: Vec<Box<dyn CapturedRequest>> = vec![Box::new(MockRequest::get(
+            "https://api.example.com/api/v1/users",
+        ))];
+        let result = discover_paths(&requests, "https://api.example.com", None);
+        assert_eq!(result, vec!["ignore:/api/v1/users"]);
+    }
+
+    #[test]
+    fn discover_parameterized_path() {
+        let requests: Vec<Box<dyn CapturedRequest>> = vec![Box::new(MockRequest::get(
+            "https://api.example.com/api/v1/users/123",
+        ))];
+        let result = discover_paths(&requests, "https://api.example.com", None);
+        assert!(result.contains(&"ignore:/api/v1/users/123".to_string()));
+        assert!(result.contains(&"ignore:/api/v1/users/{id}".to_string()));
+    }
+
+    #[test]
+    fn discover_multiple_paths_sorted_deduped() {
+        let requests: Vec<Box<dyn CapturedRequest>> = vec![
+            Box::new(MockRequest::get("https://api.example.com/users")),
+            Box::new(MockRequest::get("https://api.example.com/posts")),
+            Box::new(MockRequest::get("https://api.example.com/users")),
+        ];
+        let result = discover_paths(&requests, "https://api.example.com", None);
+        assert_eq!(result, vec!["ignore:/posts", "ignore:/users"]);
+    }
+
+    #[test]
+    fn discover_prefix_stripping() {
+        let requests: Vec<Box<dyn CapturedRequest>> = vec![
+            Box::new(MockRequest::get("https://api.example.com/api/v1/health")),
+            Box::new(MockRequest::get("https://other.example.com/ignored")),
+        ];
+        let result = discover_paths(&requests, "https://api.example.com/api/v1", None);
+        assert_eq!(result, vec!["ignore:/health"]);
+    }
+
+    #[test]
+    fn discover_strips_query_string() {
+        let requests: Vec<Box<dyn CapturedRequest>> = vec![Box::new(MockRequest::get(
+            "https://api.example.com/search?q=hello&page=1",
+        ))];
+        let result = discover_paths(&requests, "https://api.example.com", None);
+        assert_eq!(result, vec!["ignore:/search"]);
     }
 }
