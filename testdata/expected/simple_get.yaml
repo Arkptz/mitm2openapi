@@ -1,0 +1,27 @@
+openapi: 3.0.3
+info:
+  title: api.example.com API
+  version: 1.0.0
+servers:
+- url: https://api.example.com
+paths:
+  /api/v1/users:
+    get:
+      summary: GET /api/v1/users
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
