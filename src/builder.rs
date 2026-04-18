@@ -1,10 +1,9 @@
-//! OpenAPI spec builder: assembles a complete OpenAPI 3.0 spec from processed CapturedRequest data.
-
 use indexmap::IndexMap;
 use openapiv3::{
     Info, MediaType, OpenAPI, Operation, PathItem, Paths, ReferenceOr, RequestBody, Response,
     Responses, Server, StatusCode,
 };
+use tracing::debug;
 
 use crate::params;
 use crate::path_matching;
@@ -50,16 +49,47 @@ pub fn discover_paths(
     all.into_iter().collect()
 }
 
-/// Assembles an OpenAPI 3.0 spec from captured HTTP requests.
 pub struct OpenApiBuilder {
     prefix: String,
-    #[allow(dead_code)]
     config: Config,
+    tags_overrides: Option<serde_json::Map<String, serde_json::Value>>,
     templates: Vec<String>,
     spec: OpenAPI,
 }
 
-/// Extract the host from a URL prefix (e.g. `https://api.example.com/api` → `api.example.com`).
+fn extract_tag(
+    path: &str,
+    overrides: &Option<serde_json::Map<String, serde_json::Value>>,
+) -> Option<String> {
+    let first_segment = path
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .filter(|s| !s.is_empty() && !s.starts_with('{'))?;
+
+    if let Some(map) = overrides {
+        if let Some(val) = map.get(first_segment) {
+            return val.as_str().map(|s| s.to_string());
+        }
+    }
+
+    Some(first_segment.to_string())
+}
+
+fn parse_tags_overrides(
+    json_str: &Option<String>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    json_str.as_ref().and_then(|s| {
+        serde_json::from_str::<serde_json::Value>(s)
+            .ok()
+            .and_then(|v| v.as_object().cloned())
+    })
+}
+
+fn is_image_content_type(ct: Option<&str>) -> bool {
+    ct.is_some_and(|s| s.to_lowercase().starts_with("image/"))
+}
+
 fn host_from_prefix(prefix: &str) -> String {
     prefix
         .strip_prefix("https://")
@@ -165,74 +195,85 @@ impl OpenApiBuilder {
             ..OpenAPI::default()
         };
 
+        let tags_overrides = parse_tags_overrides(&config.tags_overrides);
+
         Self {
             prefix: prefix.to_string(),
             config: config.clone(),
+            tags_overrides,
             templates,
             spec,
         }
     }
 
-    /// Process a single CapturedRequest and add it to the spec.
-    /// Uses first-seen-wins: if a path+method already exists, skip.
     pub fn add_request(&mut self, request: &dyn CapturedRequest) {
         let url = request.get_url();
         let method = request.get_method().to_uppercase();
 
-        // 1. URL matching: check if request URL starts with prefix
         if !url.starts_with(&self.prefix) {
             return;
         }
 
-        // 2. Path extraction: strip prefix to get path
+        if self.config.ignore_images && is_image_content_type(request.get_response_content_type()) {
+            debug!(url, "Skipping image request");
+            return;
+        }
+
         let raw_path = &url[self.prefix.len()..];
-        // Strip query string
         let path_no_query = raw_path.split('?').next().unwrap_or(raw_path);
-        // Ensure path starts with /
         let path = if path_no_query.starts_with('/') {
             path_no_query.to_string()
         } else {
             format!("/{}", path_no_query)
         };
 
-        // 3. Template matching
         let template_path = if self.templates.is_empty() {
             path.clone()
         } else {
             match path_matching::match_path(&path, &self.templates) {
                 Some(t) => t.to_string(),
-                None => return, // no template matches, skip
+                None => return,
             }
         };
 
-        // 4. First-seen-wins: check if path+method already exists
         if let Some(ReferenceOr::Item(existing)) = self.spec.paths.paths.get(&template_path) {
             if has_operation(existing, &method) {
                 return;
             }
         }
 
-        // 5. Build the operation
         let mut operation = Operation {
             summary: Some(format!("{} {}", method, template_path)),
             ..Operation::default()
         };
 
-        // 6. Parameters: path params from template + query params from URL
-        let mut parameters: Vec<ReferenceOr<openapiv3::Parameter>> = Vec::new();
-
-        for p in params::extract_path_params(&template_path) {
-            parameters.push(ReferenceOr::Item(p));
-        }
-        for p in params::extract_query_params(url) {
-            parameters.push(ReferenceOr::Item(p));
+        if let Some(tag) = extract_tag(&template_path, &self.tags_overrides) {
+            operation.tags = vec![tag];
         }
 
-        operation.parameters = parameters;
+        if !self.config.suppress_params {
+            let mut parameters: Vec<ReferenceOr<openapiv3::Parameter>> = Vec::new();
 
-        // 7. Request body schema
+            for p in params::extract_path_params(&template_path) {
+                parameters.push(ReferenceOr::Item(p));
+            }
+            for p in params::extract_query_params(url) {
+                parameters.push(ReferenceOr::Item(p));
+            }
+
+            if self.config.include_headers {
+                for p in params::extract_header_params(
+                    request.get_request_headers(),
+                    &self.config.exclude_headers,
+                ) {
+                    parameters.push(ReferenceOr::Item(p));
+                }
+            }
+
+            operation.parameters = parameters;
+        }
+
         if let Some(req_body) = request.get_request_body() {
-            // Determine request content type from request headers
             let req_ct = request
                 .get_request_headers()
                 .iter()
@@ -257,7 +298,6 @@ impl OpenApiBuilder {
             }
         }
 
-        // 8. Response assembly
         let status_code = request.get_response_status_code().unwrap_or(200);
         let reason = request.get_response_reason().unwrap_or("OK").to_string();
 
@@ -289,7 +329,6 @@ impl OpenApiBuilder {
             ..Responses::default()
         };
 
-        // 9. Insert into spec
         let path_item = self
             .spec
             .paths
@@ -890,5 +929,168 @@ mod tests {
         ))];
         let result = discover_paths(&requests, "https://api.example.com", None);
         assert_eq!(result, vec!["ignore:/search"]);
+    }
+
+    // ── Tag extraction ─────────────────────────────────────────────
+
+    #[test]
+    fn tag_extracted_from_first_segment() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req = MockRequest::get("https://api.example.com/users/123")
+            .with_json_response(&serde_json::json!({}));
+        builder.add_request(&req);
+        let spec = builder.build();
+
+        let path_item = spec.paths.paths["/users/123"].as_item().unwrap();
+        let get_op = path_item.get.as_ref().unwrap();
+        assert_eq!(get_op.tags, vec!["users"]);
+    }
+
+    #[test]
+    fn tag_override_applied() {
+        let mut config = test_config();
+        config.tags_overrides = Some(r#"{"users": "User Management"}"#.to_string());
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req = MockRequest::get("https://api.example.com/users")
+            .with_json_response(&serde_json::json!({}));
+        builder.add_request(&req);
+        let spec = builder.build();
+
+        let path_item = spec.paths.paths["/users"].as_item().unwrap();
+        let get_op = path_item.get.as_ref().unwrap();
+        assert_eq!(get_op.tags, vec!["User Management"]);
+    }
+
+    // ── ignore_images ──────────────────────────────────────────────
+
+    #[test]
+    fn ignore_images_skips_image_responses() {
+        let mut config = test_config();
+        config.ignore_images = true;
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let mut req = MockRequest::get("https://api.example.com/avatar.png");
+        req.response_content_type = Some("image/png".to_string());
+        req.response_body = Some(vec![0x89, 0x50, 0x4E, 0x47]);
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        assert!(spec.paths.paths.is_empty());
+    }
+
+    #[test]
+    fn ignore_images_off_keeps_image_responses() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let mut req = MockRequest::get("https://api.example.com/avatar.png");
+        req.response_content_type = Some("image/png".to_string());
+        req.response_body = Some(vec![0x89, 0x50, 0x4E, 0x47]);
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        assert!(spec.paths.paths.contains_key("/avatar.png"));
+    }
+
+    // ── suppress_params ────────────────────────────────────────────
+
+    #[test]
+    fn suppress_params_removes_parameters() {
+        let mut config = test_config();
+        config.suppress_params = true;
+        let templates = vec!["/users/{id}".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, templates);
+
+        let req = MockRequest::get("https://api.example.com/users/123?page=1")
+            .with_json_response(&serde_json::json!({}));
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths["/users/{id}"].as_item().unwrap();
+        let get_op = path_item.get.as_ref().unwrap();
+        assert!(get_op.parameters.is_empty());
+    }
+
+    // ── include_headers ────────────────────────────────────────────
+
+    #[test]
+    fn include_headers_adds_header_params() {
+        let mut config = test_config();
+        config.include_headers = true;
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let mut req = MockRequest::get("https://api.example.com/data");
+        req.request_headers = vec![
+            ("X-Request-Id".to_string(), "abc".to_string()),
+            ("Host".to_string(), "api.example.com".to_string()),
+        ];
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths["/data"].as_item().unwrap();
+        let get_op = path_item.get.as_ref().unwrap();
+        let param_names: Vec<&str> = get_op
+            .parameters
+            .iter()
+            .map(|p| p.as_item().unwrap().parameter_data_ref().name.as_str())
+            .collect();
+        assert!(param_names.contains(&"X-Request-Id"));
+        assert!(!param_names.contains(&"Host"));
+    }
+
+    #[test]
+    fn exclude_headers_filters_custom_headers() {
+        let mut config = test_config();
+        config.include_headers = true;
+        config.exclude_headers = vec!["X-Internal".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let mut req = MockRequest::get("https://api.example.com/data");
+        req.request_headers = vec![
+            ("X-Request-Id".to_string(), "abc".to_string()),
+            ("X-Internal".to_string(), "secret".to_string()),
+        ];
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths["/data"].as_item().unwrap();
+        let get_op = path_item.get.as_ref().unwrap();
+        let param_names: Vec<&str> = get_op
+            .parameters
+            .iter()
+            .map(|p| p.as_item().unwrap().parameter_data_ref().name.as_str())
+            .collect();
+        assert!(param_names.contains(&"X-Request-Id"));
+        assert!(!param_names.contains(&"X-Internal"));
+    }
+
+    // ── extract_tag helper ─────────────────────────────────────────
+
+    #[test]
+    fn extract_tag_basic() {
+        assert_eq!(extract_tag("/api/v1/users", &None), Some("api".to_string()));
+    }
+
+    #[test]
+    fn extract_tag_root() {
+        assert_eq!(extract_tag("/", &None), None);
+    }
+
+    #[test]
+    fn extract_tag_param_segment_skipped() {
+        assert_eq!(extract_tag("/{id}/details", &None), None);
+    }
+
+    #[test]
+    fn extract_tag_with_override() {
+        let overrides: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"api": "Core API"}"#).unwrap();
+        assert_eq!(
+            extract_tag("/api/v1/users", &Some(overrides)),
+            Some("Core API".to_string())
+        );
     }
 }

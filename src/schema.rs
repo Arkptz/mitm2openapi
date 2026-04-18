@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn pi_produces_number() {
-        let schema = value_to_schema(&json!(3.14));
+        let schema = value_to_schema(&json!(1.23));
         assert_type(&schema, |t| {
             assert!(matches!(t, Type::Number(_)));
         });

@@ -394,9 +394,9 @@ mod tests {
 
     #[test]
     fn parse_float() {
-        let val = parse(b"4:3.14^").unwrap();
-        assert_eq!(val, TNetValue::Float(3.14));
-        assert_eq!(val.as_float(), Some(3.14));
+        let val = parse(b"4:1.23^").unwrap();
+        assert_eq!(val, TNetValue::Float(1.23));
+        assert_eq!(val.as_float(), Some(1.23));
     }
 
     #[test]
