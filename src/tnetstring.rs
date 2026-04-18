@@ -312,9 +312,7 @@ pub fn parse_one(reader: &mut impl Read) -> Result<Option<TNetValue>, Error> {
 }
 
 /// Parse all TNetValues from a reader (for multi-flow files).
-///
-/// Iteratively reads values until EOF — no recursion at top level,
-/// safe for files with thousands of flows.
+/// Fails on first error.
 pub fn parse_all(reader: &mut impl Read) -> Result<Vec<TNetValue>, Error> {
     let mut tracking = TrackingReader::new(reader);
     let mut values = Vec::new();
@@ -322,6 +320,25 @@ pub fn parse_all(reader: &mut impl Read) -> Result<Vec<TNetValue>, Error> {
         values.push(val);
     }
     Ok(values)
+}
+
+/// Parse all TNetValues leniently — returns an iterator of Result<TNetValue>.
+/// On error, stops iteration (remaining data after a corrupt entry is unrecoverable
+/// in tnetstring format since we lose framing).
+pub fn parse_all_lenient(reader: &mut impl Read) -> Vec<Result<TNetValue, Error>> {
+    let mut tracking = TrackingReader::new(reader);
+    let mut results = Vec::new();
+    loop {
+        match parse_value(&mut tracking) {
+            Ok(Some(val)) => results.push(Ok(val)),
+            Ok(None) => break,
+            Err(e) => {
+                results.push(Err(e));
+                break;
+            }
+        }
+    }
+    results
 }
 
 /// Convenience: parse a single value from a byte slice.

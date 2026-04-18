@@ -1,7 +1,10 @@
+use std::path::Path;
+
+use tracing::{debug, warn};
+
 use crate::error::{Error, Result};
 use crate::types::CapturedRequest;
 use base64::Engine;
-use std::path::Path;
 
 fn strip_bom(input: &[u8]) -> &[u8] {
     if input.starts_with(&[0xEF, 0xBB, 0xBF]) {
@@ -136,12 +139,25 @@ pub fn read_har_file(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
             .collect();
         entries.sort_by_key(|e| e.path());
         for entry in entries {
-            let bytes = std::fs::read(entry.path())?;
-            all.extend(parse_har_bytes(&bytes)?);
+            match std::fs::read(entry.path()) {
+                Ok(bytes) => match parse_har_bytes(&bytes) {
+                    Ok(requests) => {
+                        debug!(path = %entry.path().display(), count = requests.len(), "Parsed HAR file");
+                        all.extend(requests);
+                    }
+                    Err(e) => {
+                        warn!(path = %entry.path().display(), error = %e, "Skipping unparseable HAR file");
+                    }
+                },
+                Err(e) => {
+                    warn!(path = %entry.path().display(), error = %e, "Skipping unreadable HAR file");
+                }
+            }
         }
         Ok(all)
     } else {
         let bytes = std::fs::read(path)?;
+        debug!(path = %path.display(), "Parsing HAR file");
         parse_har_bytes(&bytes)
     }
 }

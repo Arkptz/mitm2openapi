@@ -1,6 +1,6 @@
-//! Mitmproxy flow dump reader — parses tnetstring-encoded flow files into `CapturedRequest`.
-
 use std::path::Path;
+
+use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
 use crate::tnetstring;
@@ -212,26 +212,44 @@ fn parse_flow(flow: &TNetValue) -> Result<MitmproxyFlowWrapper> {
     })
 }
 
-/// Read all flows from a mitmproxy flow dump file.
 pub fn read_mitmproxy_file(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
     let data = std::fs::read(path)?;
     let mut cursor = std::io::Cursor::new(data);
-    let values = tnetstring::parse_all(&mut cursor)?;
+    let values = tnetstring::parse_all_lenient(&mut cursor);
 
     let mut requests: Vec<Box<dyn CapturedRequest>> = Vec::new();
-    for flow in &values {
-        let flow_type = flow.get("type").and_then(value_to_string);
-        if flow_type.as_deref() != Some("http") {
-            continue;
+    let mut skipped = 0usize;
+    for value_result in values {
+        match value_result {
+            Ok(flow) => {
+                let flow_type = flow.get("type").and_then(value_to_string);
+                if flow_type.as_deref() != Some("http") {
+                    debug!(path = %path.display(), "Skipping non-HTTP flow");
+                    continue;
+                }
+                match parse_flow(&flow) {
+                    Ok(wrapper) => requests.push(Box::new(wrapper)),
+                    Err(e) => {
+                        warn!(path = %path.display(), error = %e, "Skipping corrupt flow");
+                        skipped += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "Skipping unparseable flow entry");
+                skipped += 1;
+            }
         }
-        let wrapper = parse_flow(flow)?;
-        requests.push(Box::new(wrapper));
     }
+
+    if skipped > 0 {
+        warn!(path = %path.display(), skipped, total = requests.len() + skipped, "Some flows were skipped");
+    }
+    debug!(path = %path.display(), count = requests.len(), "Parsed mitmproxy flows");
 
     Ok(requests)
 }
 
-/// Read all flows from a directory of .flow files.
 pub fn read_mitmproxy_dir(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
     let mut all = Vec::new();
     let mut entries: Vec<_> = std::fs::read_dir(path)?
@@ -244,7 +262,12 @@ pub fn read_mitmproxy_dir(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> 
         .collect();
     entries.sort_by_key(|e| e.path());
     for entry in entries {
-        all.extend(read_mitmproxy_file(&entry.path())?);
+        match read_mitmproxy_file(&entry.path()) {
+            Ok(requests) => all.extend(requests),
+            Err(e) => {
+                warn!(path = %entry.path().display(), error = %e, "Skipping unreadable flow file");
+            }
+        }
     }
     Ok(all)
 }
@@ -372,9 +395,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_corrupt() {
+    fn parse_corrupt_is_lenient() {
         let result = read_mitmproxy_file(&fixture("corrupt.flow"));
-        assert!(result.is_err(), "corrupt.flow should return an error");
+        assert!(
+            result.is_ok(),
+            "corrupt.flow should be handled leniently, got: {:?}",
+            result.err()
+        );
     }
 
     #[test]
