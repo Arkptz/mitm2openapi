@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 use mitm2openapi::builder::{self, OpenApiBuilder};
 use mitm2openapi::cli::{Cli, Command, InputFormat};
@@ -21,17 +21,18 @@ fn main() -> Result<()> {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting discovery");
 
             let requests = read_input(&args.input, &args.format)?;
-            eprintln!(
-                "Read {} request(s) from {}",
-                requests.len(),
-                args.input.display()
-            );
+            info!(count = requests.len(), path = %args.input.display(), "Read requests");
 
             let templates = builder::discover_paths(&requests, &args.prefix, None);
 
             let merged = if args.output.exists() {
                 let existing = load_templates(&args.output)
                     .context("failed to load existing templates file")?;
+                debug!(
+                    existing = existing.len(),
+                    new = templates.len(),
+                    "Merging templates"
+                );
                 merge_templates(&existing, &templates)
             } else {
                 templates
@@ -40,6 +41,11 @@ fn main() -> Result<()> {
             let yaml = output::templates_to_yaml(&merged)?;
             output::write_yaml(&yaml, &args.output)?;
 
+            info!(
+                count = merged.len(),
+                output = %args.output.display(),
+                "Discovery complete"
+            );
             eprintln!(
                 "Discovered {} path template(s), written to {}",
                 merged.len(),
@@ -50,11 +56,7 @@ fn main() -> Result<()> {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting generation");
 
             let requests = read_input(&args.input, &args.format)?;
-            eprintln!(
-                "Read {} request(s) from {}",
-                requests.len(),
-                args.input.display()
-            );
+            info!(count = requests.len(), path = %args.input.display(), "Read requests");
 
             let all_templates = load_templates(&args.templates).with_context(|| {
                 format!("failed to load templates from {}", args.templates.display())
@@ -71,7 +73,7 @@ fn main() -> Result<()> {
                 );
             }
 
-            eprintln!("Using {} active template(s)", active_templates.len());
+            info!(count = active_templates.len(), "Using active templates");
 
             let config = Config {
                 prefix: args.prefix.clone(),
@@ -94,6 +96,11 @@ fn main() -> Result<()> {
             let yaml = output::spec_to_yaml(&spec)?;
             output::write_yaml(&yaml, &args.output)?;
 
+            info!(
+                paths = path_count,
+                output = %args.output.display(),
+                "Generation complete"
+            );
             eprintln!(
                 "Generated OpenAPI spec with {} path(s), written to {}",
                 path_count,
@@ -105,9 +112,34 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Heuristic scoring for format auto-detection.
+/// Returns (mitmproxy_score, har_score) — higher score means more confidence.
+fn detect_format_score(path: &Path) -> (u8, u8) {
+    let mut mitmproxy_score: u8 = 0;
+    let mut har_score: u8 = 0;
+
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        match ext.to_lowercase().as_str() {
+            "flow" => mitmproxy_score += 3,
+            "har" => har_score += 3,
+            _ => {}
+        }
+    }
+
+    if mitmproxy_reader::mitmproxy_heuristic(path) {
+        mitmproxy_score += 2;
+    }
+    if har_reader::har_heuristic(path) {
+        har_score += 2;
+    }
+
+    (mitmproxy_score, har_score)
+}
+
 fn read_input(path: &Path, format: &InputFormat) -> Result<Vec<Box<dyn CapturedRequest>>> {
     match format {
         InputFormat::Mitmproxy => {
+            debug!(path = %path.display(), "Reading as mitmproxy format");
             if path.is_dir() {
                 mitmproxy_reader::read_mitmproxy_dir(path)
                     .context("failed to read mitmproxy directory")
@@ -115,34 +147,66 @@ fn read_input(path: &Path, format: &InputFormat) -> Result<Vec<Box<dyn CapturedR
                 mitmproxy_reader::read_mitmproxy_file(path).context("failed to read mitmproxy file")
             }
         }
-        InputFormat::Har => har_reader::read_har_file(path).context("failed to read HAR file"),
+        InputFormat::Har => {
+            debug!(path = %path.display(), "Reading as HAR format");
+            har_reader::read_har_file(path).context("failed to read HAR file")
+        }
         InputFormat::Auto => {
             if path.is_dir() {
+                debug!(path = %path.display(), "Auto-detecting format for directory");
                 let mitmproxy_result = mitmproxy_reader::read_mitmproxy_dir(path);
                 let har_result = har_reader::read_har_file(path);
 
                 match (mitmproxy_result, har_result) {
                     (Ok(mut m), Ok(mut h)) => {
+                        info!(
+                            mitmproxy_count = m.len(),
+                            har_count = h.len(),
+                            "Read from directory (both formats)"
+                        );
                         m.append(&mut h);
                         Ok(m)
                     }
-                    (Ok(m), Err(_)) => Ok(m),
-                    (Err(_), Ok(h)) => Ok(h),
+                    (Ok(m), Err(_)) => {
+                        debug!("Directory contained only mitmproxy flows");
+                        Ok(m)
+                    }
+                    (Err(_), Ok(h)) => {
+                        debug!("Directory contained only HAR files");
+                        Ok(h)
+                    }
                     (Err(e1), Err(_e2)) => {
                         Err(e1).context("failed to read directory as mitmproxy or HAR")
                     }
                 }
-            } else if mitmproxy_reader::mitmproxy_heuristic(path) {
-                mitmproxy_reader::read_mitmproxy_file(path)
-                    .context("detected as mitmproxy format but failed to parse")
-            } else if har_reader::har_heuristic(path) {
-                har_reader::read_har_file(path)
-                    .context("detected as HAR format but failed to parse")
             } else {
-                bail!(
-                    "Cannot auto-detect format for '{}'. Use --format to specify.",
-                    path.display()
+                let (ms, hs) = detect_format_score(path);
+                debug!(
+                    path = %path.display(),
+                    mitmproxy_score = ms,
+                    har_score = hs,
+                    "Format auto-detection scores"
                 );
+
+                if ms > hs {
+                    info!(path = %path.display(), "Auto-detected as mitmproxy format");
+                    mitmproxy_reader::read_mitmproxy_file(path)
+                        .context("detected as mitmproxy format but failed to parse")
+                } else if hs > ms {
+                    info!(path = %path.display(), "Auto-detected as HAR format");
+                    har_reader::read_har_file(path)
+                        .context("detected as HAR format but failed to parse")
+                } else if ms > 0 {
+                    warn!(path = %path.display(), "Ambiguous format detection, trying mitmproxy first");
+                    mitmproxy_reader::read_mitmproxy_file(path)
+                        .or_else(|_| har_reader::read_har_file(path).map_err(anyhow::Error::from))
+                        .context("failed to parse as either mitmproxy or HAR")
+                } else {
+                    bail!(
+                        "Cannot auto-detect format for '{}'. Use --format to specify.",
+                        path.display()
+                    );
+                }
             }
         }
     }
