@@ -1,0 +1,80 @@
+name: Integration Level 1 (Petstore)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: level1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  naive:
+    name: Naive (BREAKING)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "test-integration"
+
+      - name: Build mitm2openapi
+        run: cargo build --release
+
+      - name: Install oasdiff
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/tufin/oasdiff/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Run Level 1 integration test (naive)
+        run: |
+          chmod +x tests/integration/level1/run.sh tests/integration/level1/diff-naive.sh ci/petstore/seed.sh
+          tests/integration/level1/run.sh
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: level1-naive-artifacts
+          path: |
+            tests/integration/level1/fixtures/petstore.flow
+            tests/integration/level1/out/
+
+  strict:
+    name: Strict (WARN)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "test-integration"
+
+      - name: Build mitm2openapi
+        run: cargo build --release
+
+      - name: Install oasdiff
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/tufin/oasdiff/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Run Level 1 integration test (strict)
+        run: |
+          chmod +x tests/integration/level1/run.sh tests/integration/level1/diff-strict.sh tests/integration/level1/diff-naive.sh ci/petstore/seed.sh
+          tests/integration/level1/run.sh --strict
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: level1-strict-artifacts
+          path: |
+            tests/integration/level1/fixtures/petstore.flow
+            tests/integration/level1/out/
