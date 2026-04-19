@@ -23,3 +23,8 @@ result-*
 
 # Project
 .sisyphus/
+
+# integration test artifacts
+tests/integration/level1/fixtures/*.flow
+tests/integration/level2/out/
+ci/demo/out/
