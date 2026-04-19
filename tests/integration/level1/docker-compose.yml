@@ -1,0 +1,31 @@
+services:
+  petstore:
+    image: swaggerapi/petstore3:1.0.25
+    ports: ["8080:8080"]
+    volumes:
+      - petstore-data:/data
+      - ../../../ci/petstore/application.properties:/config/application.properties:ro
+    environment:
+      SPRING_CONFIG_LOCATION: file:/config/application.properties
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v3/openapi.json"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+    networks: [test-net]
+  mitmproxy:
+    image: mitmproxy/mitmproxy:11
+    command: >
+      mitmdump --mode regular --listen-host 0.0.0.0 --listen-port 8081
+      --set confdir=/home/mitmproxy/.mitmproxy
+      -w /flows/petstore.flow --set block_global=false
+    ports: ["8081:8081"]
+    volumes:
+      - ./fixtures:/flows
+      - mitm-ca:/home/mitmproxy/.mitmproxy
+    networks: [test-net]
+volumes:
+  petstore-data:
+  mitm-ca:
+networks:
+  test-net:
