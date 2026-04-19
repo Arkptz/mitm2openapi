@@ -1,0 +1,136 @@
+name: Demo GIF
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'ci/demo/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: demo-gif
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: Generate Demo GIF
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "test-integration"
+
+      - name: Build mitm2openapi
+        run: cargo build --release
+
+      # Phase 1: Browser recording
+      - name: Install Playwright
+        working-directory: ci/demo
+        run: |
+          npm ci || npm install
+          npx playwright install --with-deps chromium
+
+      - name: Start Toolshop stack
+        working-directory: tests/integration/level2
+        run: |
+          docker compose up -d
+          for i in $(seq 1 90); do
+            if docker compose ps laravel-api | grep -q healthy; then
+              echo "Services healthy after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 90 ]; then
+              echo "ERROR: Services did not become healthy in 90s"
+              docker compose logs
+              exit 1
+            fi
+            sleep 1
+          done
+          docker compose exec -T laravel-api php artisan migrate:refresh --seed
+
+      - name: Phase 1 — Browser recording
+        working-directory: ci/demo
+        run: |
+          mkdir -p out
+          npx playwright test phase1.spec.ts
+          # Move recorded video
+          mv test-results/*/video.webm out/phase1.webm || true
+
+      # Phase 2: Terminal recording
+      - name: Install VHS
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list
+          sudo apt update && sudo apt install -y vhs
+
+      - name: Phase 2 — Terminal recording
+        working-directory: ci/demo
+        run: vhs phase2.tape
+
+      # Phase 3: Swagger UI recording
+      - name: Generate OpenAPI spec
+        working-directory: ci/demo
+        run: |
+          $GITHUB_WORKSPACE/target/release/mitm2openapi discover \
+            -i out/demo.flow \
+            -o out/templates.yaml \
+            -p "http://localhost:8091"
+          sed -i 's/^  ignore: /  /g' out/templates.yaml
+          $GITHUB_WORKSPACE/target/release/mitm2openapi generate \
+            -i out/demo.flow \
+            -t out/templates.yaml \
+            -o out/openapi.yaml \
+            -p "http://localhost:8091"
+
+      - name: Phase 3 — Swagger UI recording
+        working-directory: ci/demo
+        run: |
+          npx playwright test phase3.spec.ts
+          mv test-results/*/video.webm out/phase3.webm || true
+
+      # Stitching
+      - name: Install gifski and gifsicle
+        run: |
+          sudo apt-get install -y gifsicle
+          cargo install gifski || true
+
+      - name: Stitch phases into demo GIF
+        working-directory: ci/demo
+        run: |
+          chmod +x build-gif.sh
+          ./build-gif.sh
+
+      # Teardown
+      - name: Teardown Toolshop
+        if: always()
+        working-directory: tests/integration/level2
+        run: docker compose down -v || true
+
+      # Size guard
+      - name: Size guard
+        run: |
+          GIF_SIZE=$(du -b docs/demo.gif | cut -f1)
+          echo "GIF size: $GIF_SIZE bytes ($(du -h docs/demo.gif | cut -f1))"
+          if [ "$GIF_SIZE" -gt 9437184 ]; then
+            echo "WARNING: GIF exceeds 9 MB. Patching README to use <video> fallback."
+            sed -i 's|<img src="docs/demo.gif" alt="Demo: capture → generate → browse">|<video src="docs/demo.mp4" autoplay loop muted>Demo: capture → generate → browse</video>|' README.md
+          fi
+
+      # Auto-commit
+      - name: Auto-commit demo artifacts
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs: regenerate demo.gif [skip ci]"
+          file_pattern: "docs/demo.gif docs/demo.mp4 README.md"

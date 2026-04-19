@@ -1,0 +1,12 @@
+{
+  "name": "demo-pipeline",
+  "private": true,
+  "scripts": {
+    "phase1": "npx playwright test phase1.spec.ts",
+    "phase3": "npx playwright test phase3.spec.ts",
+    "install:browsers": "npx playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0"
+  }
+}

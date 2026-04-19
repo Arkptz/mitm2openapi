@@ -1,0 +1,21 @@
+# Compose overlay for demo GIF pipeline — mitmproxy sidecar
+# Used by demo-gif.yml workflow alongside the main Toolshop compose
+services:
+  mitmproxy:
+    image: mitmproxy/mitmproxy:11
+    command: >
+      mitmdump --mode regular --listen-host 0.0.0.0 --listen-port 8080
+      --set confdir=/home/mitmproxy/.mitmproxy
+      -w /flows/demo.flow --set block_global=false
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./out:/flows
+      - mitm-ca:/home/mitmproxy/.mitmproxy
+    networks: [test-net]
+
+volumes:
+  mitm-ca:
+
+networks:
+  test-net:

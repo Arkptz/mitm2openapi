@@ -14,7 +14,7 @@ done
 FLOW="$SCRIPT_DIR/fixtures/petstore.flow"
 TEMPLATES="$SCRIPT_DIR/out/templates.yaml"
 GENERATED="$SCRIPT_DIR/out/generated.yaml"
-PREFIX="http://localhost:8080"
+PREFIX="http://petstore:8080"
 
 mkdir -p "$SCRIPT_DIR/out"
 

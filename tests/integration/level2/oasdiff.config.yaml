@@ -1,0 +1,18 @@
+# oasdiff allow-list for Toolshop Level 2 baseline diff
+# These known differences are expected between our generated spec and the official baseline
+
+# Toolshop-specific exceptions:
+#   - Server URLs differ (localhost vs production)
+#   - Info block (title, version) may differ
+#   - Some query parameters may appear in different order
+#   - CORS headers may still leak through normalization
+
+# Usage: oasdiff diff --config oasdiff.config.yaml baseline.json generated.yaml
+
+# Known false positives to suppress:
+exclude:
+  # Server URL always differs between generated (localhost) and baseline (production)
+  - path: "/info/servers"
+    change: "endpoint-added"
+  - path: "/info/servers"
+    change: "endpoint-removed"

@@ -1,3 +1,7 @@
+![Nightly Integration](https://github.com/arkptz/mitmproxy2swagger-rs/actions/workflows/integration-level2.yml/badge.svg)
+
+<img src="docs/demo.gif" alt="Demo: capture → generate → browse">
+
 # mitm2openapi
 
 Convert mitmproxy flow dumps and HAR files to OpenAPI 3.0 specifications.

@@ -2,7 +2,10 @@
 set -euo pipefail
 
 PROXY="http://localhost:8081"
-BASE="http://localhost:8080/api/v3"
+# Use Docker service name for Petstore when going through the mitmproxy proxy.
+# The proxy runs inside the Docker network where 'petstore' resolves correctly.
+# 'localhost:8080' would resolve to the proxy's own container, not Petstore.
+BASE="http://petstore:8080/api/v3"
 
 echo "=== Seeding Petstore via mitmproxy ==="
 

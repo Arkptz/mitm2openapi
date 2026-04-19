@@ -1,0 +1,67 @@
+services:
+  angular-ui:
+    image: testsmithio/practice-software-testing-sprint5:1.9
+    ports:
+      - "4200:4200"
+    environment:
+      API_URL: http://laravel-api:8091
+    depends_on:
+      laravel-api:
+        condition: service_healthy
+    networks: [test-net]
+
+  laravel-api:
+    image: testsmithio/practice-software-testing-sprint5-api:1.9
+    ports:
+      - "8091:8091"
+    environment:
+      DB_CONNECTION: mysql
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_DATABASE: toolshop
+      DB_USERNAME: root
+      DB_PASSWORD: secret
+      APP_URL: http://localhost:8091
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [test-net]
+
+  mariadb:
+    image: mariadb:10.11
+    environment:
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_DATABASE: toolshop
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-psecret"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    networks: [test-net]
+
+  mitmproxy:
+    image: mitmproxy/mitmproxy:11
+    command: >
+      mitmdump --mode regular --listen-host 0.0.0.0 --listen-port 8080
+      --set confdir=/home/mitmproxy/.mitmproxy
+      -w /flows/toolshop.flow --set block_global=false
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./out:/flows
+      - mitm-ca:/home/mitmproxy/.mitmproxy
+    networks: [test-net]
+
+volumes:
+  mariadb-data:
+  mitm-ca:
+
+networks:
+  test-net:

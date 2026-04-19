@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # build-gif.sh — Stitch three demo phases into a single GIF
 # Usage: ./build-gif.sh [--phase2-only]
+# Parameters per ADR Decision 8: gifski 12fps 960px q90, gifsicle -O3 --lossy=80
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,8 +34,8 @@ if [ "$PHASE2_ONLY" = true ]; then
   encode "$OUT/phase2.mp4" "$OUT/phase2-labeled.mp4" "2/3 Convert flow -> OpenAPI"
 
   # Generate GIF from phase2 only
-  gifski --fps 12 --width 960 --quality 90 -o "$OUT/phase2.gif" \
-    <(ffmpeg -y -i "$OUT/phase2-labeled.mp4" -vf "fps=12,scale=960:-2" -f image2pipe -vcodec ppm -)
+  ffmpeg -y -i "$OUT/phase2-labeled.mp4" -vf "fps=12,scale=960:-2" -f image2pipe -vcodec ppm - | \
+    gifski --fps 12 --width 960 --quality 90 -o "$OUT/phase2.gif" -
 
   gifsicle -O3 --lossy=80 --output "$OUT/phase2-opt.gif" "$OUT/phase2.gif"
   echo "Phase 2 GIF: $(du -h "$OUT/phase2-opt.gif" | cut -f1)"
