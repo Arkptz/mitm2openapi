@@ -24,6 +24,9 @@ result-*
 # Project
 .sisyphus/
 
+# Ruff cache (leftover from Python tooling)
+.ruff_cache/
+
 # integration test artifacts
 tests/integration/level1/fixtures/*.flow
 tests/integration/level1/out/
