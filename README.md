@@ -17,6 +17,14 @@ A Rust rewrite of [mitmproxy2swagger](https://github.com/alufers/mitmproxy2swagg
 
 </div>
 
+## Why?
+
+[mitmproxy2swagger](https://github.com/alufers/mitmproxy2swagger) (the Python original by [@alufers](https://github.com/alufers)) works well, but requires Python, `pip`, and `mitmproxy` installed in the environment. For CI pipelines, slim Docker images, security audits, and one-off usage that's friction.
+
+`mitm2openapi` ships as a single ~5 MB static binary — drop it into any environment, no runtime, no `venv`, no `pip install`. Same OpenAPI 3.0 output as the original, plus first-class HAR support and glob-based filters for fully unattended pipelines.
+
+Credit to [@alufers](https://github.com/alufers) for the original tool that pioneered this workflow.
+
 ## Features
 
 - **Fast** — pure Rust, single-threaded, processes captures in milliseconds
