@@ -1,0 +1,14 @@
+[workspace]
+# Generate CHANGELOG.md from conventional commits
+changelog_update = true
+# Create GitHub Release with auto-generated notes
+git_release_enable = true
+# Enable semver checks on PRs (requires cargo-semver-checks)
+semver_check = true
+# Bump dependencies in lockfile
+dependencies_update = false
+
+[[package]]
+name = "mitm2openapi"
+# Use the existing git-cliff style for changelog sections
+changelog_include = ["mitm2openapi"]
