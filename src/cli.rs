@@ -47,6 +47,18 @@ pub struct DiscoverArgs {
     /// Input format override
     #[arg(long, value_enum, default_value_t = InputFormat::Auto)]
     pub format: InputFormat,
+
+    /// Comma-separated glob patterns for paths to drop from output entirely
+    /// (e.g. "/static/**,/images/**,*.css,*.js").
+    /// Use `*` for a single path segment, `**` for any number of segments.
+    #[arg(long, value_delimiter = ',')]
+    pub exclude_patterns: Vec<String>,
+
+    /// Comma-separated glob patterns for paths to emit WITHOUT the `ignore:`
+    /// prefix (i.e. auto-activate for generate). Everything else still gets
+    /// `ignore:` so you can review it. Saves a manual sed step.
+    #[arg(long, value_delimiter = ',')]
+    pub include_patterns: Vec<String>,
 }
 
 #[derive(Parser, Debug)]

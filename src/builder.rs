@@ -10,14 +10,74 @@ use crate::path_matching;
 use crate::schema;
 use crate::types::{CapturedRequest, Config};
 
+/// Match a path against a simple glob: `*` matches any chars except `/`,
+/// `**` matches any chars including `/`. Used by `--exclude-patterns` to
+/// drop static assets (e.g. "/static/**", "*.css") out of discovery.
+pub fn glob_match(pattern: &str, path: &str) -> bool {
+    let p_bytes = pattern.as_bytes();
+    let s_bytes = path.as_bytes();
+    glob_match_impl(p_bytes, 0, s_bytes, 0)
+}
+
+fn glob_match_impl(pat: &[u8], mut pi: usize, s: &[u8], mut si: usize) -> bool {
+    while pi < pat.len() {
+        match pat[pi] {
+            b'*' => {
+                let double = pi + 1 < pat.len() && pat[pi + 1] == b'*';
+                let skip = if double { 2 } else { 1 };
+                if pi + skip >= pat.len() {
+                    return if double {
+                        true
+                    } else {
+                        !s[si..].contains(&b'/')
+                    };
+                }
+                for k in si..=s.len() {
+                    if !double && s[si..k].contains(&b'/') {
+                        break;
+                    }
+                    if glob_match_impl(pat, pi + skip, s, k) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            c => {
+                if si >= s.len() || s[si] != c {
+                    return false;
+                }
+                pi += 1;
+                si += 1;
+            }
+        }
+    }
+    si == s.len()
+}
+
 /// Discover unique API paths from captured requests and generate templates.
 /// Each template is prefixed with "ignore:" — the user removes the prefix for paths they want.
 /// Parameterized paths (with numeric/UUID segments) get suggestions like "/users/{id}".
+///
+/// `exclude_patterns`: paths matching any glob are dropped entirely (not even emitted as `ignore:`).
+/// `include_patterns`: paths matching any glob are emitted WITHOUT the `ignore:` prefix
+/// (i.e. auto-activated for `generate`). Non-matching paths still get `ignore:` for review.
 pub fn discover_paths(
     requests: &[Box<dyn CapturedRequest>],
     prefix: &str,
     custom_regex: Option<&regex::Regex>,
+    exclude_patterns: &[String],
+    include_patterns: &[String],
 ) -> Vec<String> {
+    let is_excluded = |path: &str| exclude_patterns.iter().any(|pat| glob_match(pat, path));
+    let is_included = |path: &str| include_patterns.iter().any(|pat| glob_match(pat, path));
+    let format_template = |path: &str| -> String {
+        if is_included(path) {
+            path.to_string()
+        } else {
+            format!("ignore:{}", path)
+        }
+    };
+
     let mut seen_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for req in requests {
@@ -32,6 +92,9 @@ pub fn discover_paths(
         } else {
             format!("/{}", path_no_query)
         };
+        if is_excluded(&path) {
+            continue;
+        }
         seen_paths.insert(path);
     }
 
@@ -40,10 +103,12 @@ pub fn discover_paths(
 
     let mut all: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for p in &paths_vec {
-        all.insert(format!("ignore:{}", p));
+        all.insert(format_template(p));
     }
     for s in &suggested {
-        all.insert(format!("ignore:{}", s));
+        if !is_excluded(s) {
+            all.insert(format_template(s));
+        }
     }
 
     all.into_iter().collect()
@@ -878,7 +943,7 @@ mod tests {
 
     #[test]
     fn discover_empty_requests() {
-        let result = discover_paths(&[], "https://api.example.com", None);
+        let result = discover_paths(&[], "https://api.example.com", None, &[], &[]);
         assert!(result.is_empty());
     }
 
@@ -887,7 +952,7 @@ mod tests {
         let requests: Vec<Box<dyn CapturedRequest>> = vec![Box::new(MockRequest::get(
             "https://api.example.com/api/v1/users",
         ))];
-        let result = discover_paths(&requests, "https://api.example.com", None);
+        let result = discover_paths(&requests, "https://api.example.com", None, &[], &[]);
         assert_eq!(result, vec!["ignore:/api/v1/users"]);
     }
 
@@ -896,7 +961,7 @@ mod tests {
         let requests: Vec<Box<dyn CapturedRequest>> = vec![Box::new(MockRequest::get(
             "https://api.example.com/api/v1/users/123",
         ))];
-        let result = discover_paths(&requests, "https://api.example.com", None);
+        let result = discover_paths(&requests, "https://api.example.com", None, &[], &[]);
         assert!(result.contains(&"ignore:/api/v1/users/123".to_string()));
         assert!(result.contains(&"ignore:/api/v1/users/{id}".to_string()));
     }
@@ -908,7 +973,7 @@ mod tests {
             Box::new(MockRequest::get("https://api.example.com/posts")),
             Box::new(MockRequest::get("https://api.example.com/users")),
         ];
-        let result = discover_paths(&requests, "https://api.example.com", None);
+        let result = discover_paths(&requests, "https://api.example.com", None, &[], &[]);
         assert_eq!(result, vec!["ignore:/posts", "ignore:/users"]);
     }
 
@@ -918,7 +983,7 @@ mod tests {
             Box::new(MockRequest::get("https://api.example.com/api/v1/health")),
             Box::new(MockRequest::get("https://other.example.com/ignored")),
         ];
-        let result = discover_paths(&requests, "https://api.example.com/api/v1", None);
+        let result = discover_paths(&requests, "https://api.example.com/api/v1", None, &[], &[]);
         assert_eq!(result, vec!["ignore:/health"]);
     }
 
@@ -927,8 +992,59 @@ mod tests {
         let requests: Vec<Box<dyn CapturedRequest>> = vec![Box::new(MockRequest::get(
             "https://api.example.com/search?q=hello&page=1",
         ))];
-        let result = discover_paths(&requests, "https://api.example.com", None);
+        let result = discover_paths(&requests, "https://api.example.com", None, &[], &[]);
         assert_eq!(result, vec!["ignore:/search"]);
+    }
+
+    #[test]
+    fn discover_respects_exclude_patterns() {
+        let requests: Vec<Box<dyn CapturedRequest>> = vec![
+            Box::new(MockRequest::get("https://api.example.com/api/v1/users")),
+            Box::new(MockRequest::get(
+                "https://api.example.com/static/css/main.abc.css",
+            )),
+            Box::new(MockRequest::get(
+                "https://api.example.com/static/js/app.xyz.js",
+            )),
+            Box::new(MockRequest::get("https://api.example.com/images/logo.svg")),
+        ];
+        let patterns: Vec<String> = vec!["/static/**".into(), "/images/**".into()];
+        let result = discover_paths(&requests, "https://api.example.com", None, &patterns, &[]);
+        assert_eq!(result, vec!["ignore:/api/v1/users"]);
+    }
+
+    #[test]
+    fn discover_respects_include_patterns() {
+        let requests: Vec<Box<dyn CapturedRequest>> = vec![
+            Box::new(MockRequest::get("https://api.example.com/api/v1/users")),
+            Box::new(MockRequest::get("https://api.example.com/login")),
+        ];
+        let include: Vec<String> = vec!["/api/**".into()];
+        let result = discover_paths(&requests, "https://api.example.com", None, &[], &include);
+        assert!(result.contains(&"/api/v1/users".to_string()));
+        assert!(result.contains(&"ignore:/login".to_string()));
+    }
+
+    // ── glob_match ─────────────────────────────────────────────────
+
+    #[test]
+    fn glob_matches_double_star_subtree() {
+        assert!(glob_match("/static/**", "/static/css/main.css"));
+        assert!(glob_match("/static/**", "/static/"));
+        assert!(!glob_match("/static/**", "/other/file"));
+    }
+
+    #[test]
+    fn glob_matches_single_star_within_segment() {
+        assert!(glob_match("*.css", "main.css"));
+        assert!(glob_match("/api/*/users", "/api/v1/users"));
+        assert!(!glob_match("/api/*/users", "/api/v1/v2/users"));
+    }
+
+    #[test]
+    fn glob_exact_match() {
+        assert!(glob_match("/health", "/health"));
+        assert!(!glob_match("/health", "/healthz"));
     }
 
     // ── Tag extraction ─────────────────────────────────────────────

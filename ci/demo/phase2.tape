@@ -8,28 +8,16 @@ Set Width 1280
 Set Height 720
 Set Framerate 30
 Set PlaybackSpeed 1
-# Show the tool in action: convert crAPI flow to OpenAPI
-Type "./target/release/mitm2openapi discover -i ci/demo/fixtures/demo.flow -o ci/demo/out/templates.yaml -p http://crapi-web:80"
-Sleep 500ms
-Enter
-Sleep 2s
-Sleep 3s
 
-Type "# Edit templates.yaml to remove 'ignore:' prefix from desired endpoints"
+Type "./target/release/mitm2openapi discover -i ci/demo/out/demo.flow -o ci/demo/out/templates.yaml -p http://crapi-web --exclude-patterns '/static/**,/images/**,*.css,*.js,*.svg' --include-patterns '/identity/**,/workshop/**,/community/**'"
 Sleep 500ms
 Enter
-Sleep 500ms
+Sleep 5s
 
-Type "sed -i 's/^  ignore: /  /g' ci/demo/out/templates.yaml"
+Type "./target/release/mitm2openapi generate -i ci/demo/out/demo.flow -t ci/demo/out/templates.yaml -o ci/demo/out/openapi.yaml -p http://crapi-web"
 Sleep 500ms
 Enter
-Sleep 500ms
-
-Type "./target/release/mitm2openapi generate -i ci/demo/fixtures/demo.flow -t ci/demo/out/templates.yaml -o ci/demo/out/openapi.yaml -p http://crapi-web:80"
-Sleep 500ms
-Enter
-Sleep 3s
-Sleep 3s
+Sleep 8s
 
 Type "head -30 ci/demo/out/openapi.yaml"
 Sleep 500ms

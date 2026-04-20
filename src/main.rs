@@ -23,7 +23,13 @@ fn main() -> Result<()> {
             let requests = read_input(&args.input, &args.format)?;
             info!(count = requests.len(), path = %args.input.display(), "Read requests");
 
-            let templates = builder::discover_paths(&requests, &args.prefix, None);
+            let templates = builder::discover_paths(
+                &requests,
+                &args.prefix,
+                None,
+                &args.exclude_patterns,
+                &args.include_patterns,
+            );
 
             let merged = if args.output.exists() {
                 let existing = load_templates(&args.output)

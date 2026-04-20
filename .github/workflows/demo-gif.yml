@@ -129,13 +129,16 @@ jobs:
           $GITHUB_WORKSPACE/target/release/mitm2openapi discover \
             -i out/demo.flow \
             -o out/templates.yaml \
-            -p "http://crapi-web"
-          sed -i 's/ignore://g' out/templates.yaml
+            -p "http://crapi-web" \
+            --exclude-patterns "/static/**,/images/**,*.css,*.js,*.svg,*.png,*.jpg,*.woff2" \
+            --include-patterns "/identity/**,/workshop/**,/community/**"
           $GITHUB_WORKSPACE/target/release/mitm2openapi generate \
             -i out/demo.flow \
             -t out/templates.yaml \
             -o out/openapi.yaml \
             -p "http://crapi-web"
+          echo "--- openapi paths ---"
+          grep -E "^  /" out/openapi.yaml | head -20
 
       - name: Phase 3 — Swagger UI recording (host)
         working-directory: ci/demo
