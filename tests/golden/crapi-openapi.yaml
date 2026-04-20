@@ -1,0 +1,613 @@
+openapi: '3.0.3'
+info:
+  title: crapi-web API
+  version: 1.0.0
+servers:
+  - url: http://crapi-web
+paths:
+  /identity/api/auth/login:
+    post:
+      tags:
+        - identity
+      summary: POST /identity/api/auth/login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  mfaRequired:
+                    type: boolean
+                  token:
+                    type: string
+                  type:
+                    type: string
+  /identity/api/v2/user/dashboard:
+    get:
+      tags:
+        - identity
+      summary: GET /identity/api/v2/user/dashboard
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available_credit:
+                    type: number
+                  email:
+                    type: string
+                  id:
+                    type: integer
+                  name:
+                    type: string
+                  number:
+                    type: string
+                  picture_url:
+                    nullable: true
+                    type: object
+                  role:
+                    type: string
+                  video_id:
+                    type: integer
+                  video_name:
+                    type: string
+                  video_url:
+                    type: string
+  /workshop/api/shop/products:
+    get:
+      tags:
+        - workshop
+      summary: GET /workshop/api/shop/products
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  credit:
+                    type: number
+                  next_offset:
+                    nullable: true
+                    type: object
+                  previous_offset:
+                    nullable: true
+                    type: object
+                  products:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        image_url:
+                          type: string
+                        name:
+                          type: string
+                        price:
+                          type: string
+  /identity/api/auth/forget-password:
+    post:
+      tags:
+        - identity
+      summary: POST /identity/api/auth/forget-password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  status:
+                    type: integer
+  /identity/api/v2/vehicle/vehicles:
+    get:
+      tags:
+        - identity
+      summary: GET /identity/api/v2/vehicle/vehicles
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    model:
+                      type: object
+                      properties:
+                        fuel_type:
+                          type: string
+                        id:
+                          type: integer
+                        model:
+                          type: string
+                        vehicle_img:
+                          type: string
+                        vehiclecompany:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                            name:
+                              type: string
+                    owner:
+                      nullable: true
+                      type: object
+                    pincode:
+                      type: string
+                    previousOwners:
+                      type: array
+                      items: {}
+                    status:
+                      type: string
+                    uuid:
+                      type: string
+                    vehicleLocation:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        latitude:
+                          type: string
+                        longitude:
+                          type: string
+                    vin:
+                      type: string
+                    year:
+                      type: integer
+  /identity/api/v2/vehicle/resend_email:
+    post:
+      tags:
+        - identity
+      summary: POST /identity/api/v2/vehicle/resend_email
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  status:
+                    type: integer
+  /identity/api/v2/vehicle/f89b5f21-7829-45cb-a650-299a61090378/location:
+    get:
+      tags:
+        - identity
+      summary: GET /identity/api/v2/vehicle/f89b5f21-7829-45cb-a650-299a61090378/location
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  carId:
+                    type: string
+                  email:
+                    type: string
+                  fullName:
+                    type: string
+                  vehicleLocation:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                      latitude:
+                        type: string
+                      longitude:
+                        type: string
+  /community/api/v2/community/posts/recent:
+    get:
+      tags:
+        - community
+      summary: GET /community/api/v2/community/posts/recent
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: string
+          style: form
+        - in: query
+          name: offset
+          schema:
+            type: string
+          style: form
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  next_offset:
+                    nullable: true
+                    type: object
+                  posts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        CreatedAt:
+                          type: string
+                        author:
+                          type: object
+                          properties:
+                            created_at:
+                              type: string
+                            email:
+                              type: string
+                            nickname:
+                              type: string
+                            profile_pic_url:
+                              type: string
+                            vehicleid:
+                              type: string
+                        authorid:
+                          type: integer
+                        comments:
+                          type: array
+                          items: {}
+                        content:
+                          type: string
+                        id:
+                          type: string
+                        title:
+                          type: string
+                  previous_offset:
+                    nullable: true
+                    type: object
+                  total:
+                    type: integer
+  /community/api/v2/community/posts:
+    post:
+      tags:
+        - community
+      summary: POST /community/api/v2/community/posts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                author:
+                  type: object
+                  properties:
+                    email:
+                      type: string
+                    nickname:
+                      type: string
+                content:
+                  type: string
+                title:
+                  type: string
+                vehicle_id:
+                  type: string
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  CreatedAt:
+                    type: string
+                  author:
+                    type: object
+                    properties:
+                      created_at:
+                        type: string
+                      email:
+                        type: string
+                      nickname:
+                        type: string
+                      profile_pic_url:
+                        type: string
+                      vehicleid:
+                        type: string
+                  authorid:
+                    type: integer
+                  comments:
+                    type: array
+                    items: {}
+                  content:
+                    type: string
+                  id:
+                    type: string
+                  title:
+                    type: string
+  /community/api/v2/community/posts/{id}:
+    get:
+      tags:
+        - community
+      summary: GET /community/api/v2/community/posts/{id}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  CreatedAt:
+                    type: string
+                  author:
+                    type: object
+                    properties:
+                      created_at:
+                        type: string
+                      email:
+                        type: string
+                      nickname:
+                        type: string
+                      profile_pic_url:
+                        type: string
+                      vehicleid:
+                        type: string
+                  authorid:
+                    type: integer
+                  comments:
+                    type: array
+                    items: {}
+                  content:
+                    type: string
+                  id:
+                    type: string
+                  title:
+                    type: string
+  /community/api/v2/coupon/validate-coupon:
+    post:
+      tags:
+        - community
+      summary: POST /community/api/v2/coupon/validate-coupon
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                coupon_code:
+                  type: string
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  CreatedAt:
+                    type: string
+                  amount:
+                    type: string
+                  coupon_code:
+                    type: string
+  /workshop/api/shop/orders:
+    post:
+      tags:
+        - workshop
+      summary: POST /workshop/api/shop/orders
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                product_id:
+                  type: integer
+                quantity:
+                  type: integer
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  credit:
+                    type: number
+                  id:
+                    type: integer
+                  message:
+                    type: string
+  /workshop/api/shop/orders/all:
+    get:
+      tags:
+        - workshop
+      summary: GET /workshop/api/shop/orders/all
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: string
+          style: form
+        - in: query
+          name: offset
+          schema:
+            type: string
+          style: form
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  next_offset:
+                    nullable: true
+                    type: object
+                  orders:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        created_on:
+                          type: string
+                        id:
+                          type: integer
+                        product:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                            image_url:
+                              type: string
+                            name:
+                              type: string
+                            price:
+                              type: string
+                        quantity:
+                          type: integer
+                        status:
+                          type: string
+                        transaction_id:
+                          type: string
+                        user:
+                          type: object
+                          properties:
+                            email:
+                              type: string
+                            number:
+                              type: string
+                  previous_offset:
+                    nullable: true
+                    type: object
+  /workshop/api/shop/orders/6:
+    get:
+      tags:
+        - workshop
+      summary: GET /workshop/api/shop/orders/6
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order:
+                    type: object
+                    properties:
+                      created_on:
+                        type: string
+                      id:
+                        type: integer
+                      product:
+                        type: object
+                        properties:
+                          id:
+                            type: integer
+                          image_url:
+                            type: string
+                          name:
+                            type: string
+                          price:
+                            type: string
+                      quantity:
+                        type: integer
+                      status:
+                        type: string
+                      transaction_id:
+                        type: string
+                      user:
+                        type: object
+                        properties:
+                          email:
+                            type: string
+                          number:
+                            type: string
+                  payment:
+                    type: object
+  /workshop/api/mechanic:
+    get:
+      tags:
+        - workshop
+      summary: GET /workshop/api/mechanic
+      responses:
+        '301':
+          description: Moved Permanently
+  /workshop/api/mechanic/:
+    get:
+      tags:
+        - workshop
+      summary: GET /workshop/api/mechanic/
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mechanics:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        mechanic_code:
+                          type: string
+                        user:
+                          type: object
+                          properties:
+                            email:
+                              type: string
+                            number:
+                              type: string
+                  next_offset:
+                    nullable: true
+                    type: object
+                  previous_offset:
+                    nullable: true
+                    type: object

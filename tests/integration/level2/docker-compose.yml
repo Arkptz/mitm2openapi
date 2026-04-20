@@ -1,49 +1,144 @@
 services:
-  angular-ui:
-    image: testsmithio/practice-software-testing-sprint5:1.9
-    ports:
-      - "4200:4200"
+  crapi-identity:
+    image: crapi/crapi-identity:latest
     environment:
-      API_URL: http://laravel-api:8091
+      DB_NAME: crapi
+      DB_USER: admin
+      DB_PASSWORD: crapisecretpassword
+      DB_HOST: postgresdb
+      DB_PORT: "5432"
+      SERVER_PORT: "8080"
+      MAILHOG_HOST: mailhog
+      MAILHOG_PORT: "1025"
+      MAILHOG_DOMAIN: example.com
+      SMTP_HOST: smtp.example.com
+      SMTP_PORT: "587"
+      SMTP_EMAIL: user@example.com
+      SMTP_PASS: xxxxxxxxxxxxxx
+      SMTP_FROM: no-reply@example.com
+      SMTP_AUTH: "true"
+      SMTP_STARTTLS: "true"
+      JWT_SECRET: crapi
+      ENABLE_SHELL_INJECTION: "false"
+      ENABLE_LOG4J: "false"
+      API_GATEWAY_URL: https://api.mypremiumdealership.com
+      TLS_ENABLED: "false"
+      TLS_KEYSTORE_TYPE: PKCS12
+      TLS_KEYSTORE: classpath:certs/server.p12
+      TLS_KEYSTORE_PASSWORD: passw0rd
+      TLS_KEY_PASSWORD: passw0rd
+      TLS_KEY_ALIAS: identity
+    volumes:
+      - keys:/app/keys
     depends_on:
-      laravel-api:
+      postgresdb:
         condition: service_healthy
+      mongodb:
+        condition: service_started
+      mailhog:
+        condition: service_started
     networks: [test-net]
 
-  laravel-api:
-    image: testsmithio/practice-software-testing-sprint5-api:1.9
-    ports:
-      - "8091:8091"
+  crapi-community:
+    image: crapi/crapi-community:latest
     environment:
-      DB_CONNECTION: mysql
-      DB_HOST: mariadb
-      DB_PORT: 3306
-      DB_DATABASE: toolshop
-      DB_USERNAME: root
-      DB_PASSWORD: secret
-      APP_URL: http://localhost:8091
+      IDENTITY_SERVICE: "crapi-identity:8080"
+      DB_NAME: crapi
+      DB_USER: admin
+      DB_PASSWORD: crapisecretpassword
+      DB_HOST: postgresdb
+      DB_PORT: "5432"
+      SERVER_PORT: "8087"
+      MONGO_DB_HOST: mongodb
+      MONGO_DB_PORT: "27017"
+      MONGO_DB_USER: admin
+      MONGO_DB_PASSWORD: crapisecretpassword
+      MONGO_DB_NAME: crapi
+      TLS_ENABLED: "false"
+      TLS_CERTIFICATE: certs/server.crt
+      TLS_KEY: certs/server.key
     depends_on:
-      mariadb:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8091/status"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
+      - crapi-identity
     networks: [test-net]
 
-  mariadb:
-    image: mariadb:10.11
+  crapi-workshop:
+    image: crapi/crapi-workshop:latest
     environment:
-      MYSQL_ROOT_PASSWORD: secret
-      MYSQL_DATABASE: toolshop
+      IDENTITY_SERVICE: "crapi-identity:8080"
+      DB_NAME: crapi
+      DB_USER: admin
+      DB_PASSWORD: crapisecretpassword
+      DB_HOST: postgresdb
+      DB_PORT: "5432"
+      SERVER_PORT: "8000"
+      MONGO_DB_HOST: mongodb
+      MONGO_DB_PORT: "27017"
+      MONGO_DB_USER: admin
+      MONGO_DB_PASSWORD: crapisecretpassword
+      MONGO_DB_NAME: crapi
+      SECRET_KEY: crapi
+      API_GATEWAY_URL: https://api.mypremiumdealership.com
+      TLS_ENABLED: "false"
+      TLS_CERTIFICATE: certs/server.crt
+      TLS_KEY: certs/server.key
+    depends_on:
+      - crapi-identity
+    networks: [test-net]
+
+  crapi-web:
+    image: crapi/crapi-web:latest
+    ports:
+      - "8888:80"
+    environment:
+      COMMUNITY_SERVICE: "crapi-community:8087"
+      IDENTITY_SERVICE: "crapi-identity:8080"
+      WORKSHOP_SERVICE: "crapi-workshop:8000"
+      MAILHOG_WEB_SERVICE: "mailhog:8025"
+      CHATBOT_SERVICE: "localhost:5002"
+      TLS_ENABLED: "false"
+    depends_on:
+      - crapi-identity
+      - crapi-community
+      - crapi-workshop
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-psecret"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost/health || curl -sf http://localhost/health",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [test-net]
+
+  postgresdb:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: crapi
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: crapisecretpassword
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d crapi"]
       interval: 3s
       timeout: 2s
       retries: 30
+    networks: [test-net]
+
+  mongodb:
+    image: mongo:4.4
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: crapisecretpassword
     volumes:
-      - mariadb-data:/var/lib/mysql
+      - mongodb-data:/data/db
+    networks: [test-net]
+
+  mailhog:
+    image: crapi/mailhog:latest
+    ports:
+      - "8025:8025"
     networks: [test-net]
 
   mitmproxy:
@@ -51,16 +146,47 @@ services:
     command: >
       mitmdump --mode regular --listen-host 0.0.0.0 --listen-port 8080
       --set confdir=/home/mitmproxy/.mitmproxy
-      -w /flows/toolshop.flow --set block_global=false
+      -w /flows/crapi.flow --set block_global=false
     ports:
       - "8080:8080"
     volumes:
       - ./out:/flows
       - mitm-ca:/home/mitmproxy/.mitmproxy
+    healthcheck:
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(0 if s.connect_ex(('127.0.0.1',8080))==0 else 1)"
+      interval: 2s
+      timeout: 2s
+      retries: 10
     networks: [test-net]
 
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.59.1-noble
+    profiles: ["test"]
+    working_dir: /work/tests/integration/level2
+    shm_size: "1gb"
+    ipc: host
+    volumes:
+      - ../../..:/work:rw
+    environment:
+      HOME: /tmp
+      CI: "1"
+    depends_on:
+      crapi-web:
+        condition: service_healthy
+      mitmproxy:
+        condition: service_healthy
+    networks: [test-net]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep infinity"]
+
 volumes:
-  mariadb-data:
+  postgresql-data:
+  mongodb-data:
+  keys:
   mitm-ca:
 
 networks:

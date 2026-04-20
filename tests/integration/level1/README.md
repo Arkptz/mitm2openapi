@@ -68,7 +68,7 @@ oasdiff configuration file rather than weakening the diff mode:
 
 ```bash
 # Create or edit .oasdiff.yaml at repo root
-oasdiff diff baseline.yaml generated.yaml \
+oasdiff breaking baseline.yaml generated.yaml \
   --fail-on WARN \
   --exclude-elements "description"
 ```
@@ -94,7 +94,7 @@ If a pattern causes strict-only failures across **3 or more PRs**:
 | File | Purpose |
 |------|---------|
 | `run.sh` | Orchestrator — sets up Docker, generates spec, delegates to diff script |
-| `diff-naive.sh` | Runs `oasdiff diff --fail-on BREAKING` |
-| `diff-strict.sh` | Runs `oasdiff diff --fail-on WARN` |
+| `diff-naive.sh` | Runs `oasdiff breaking --fail-on ERR` |
+| `diff-strict.sh` | Runs `oasdiff breaking --fail-on WARN` |
 | `docker-compose.yml` | Petstore + mitmproxy service definitions |
 | `fixtures/` | Seed data and captured flow files |

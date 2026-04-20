@@ -4,15 +4,15 @@ This document covers how to run the three test tracks locally.
 
 ## Prerequisites
 
-| Tool | Required for | Install |
-|------|-------------|---------|
-| Rust toolchain | Build + unit tests | [rustup.rs](https://rustup.rs) |
-| Docker + Compose | All integration tests | [docs.docker.com](https://docs.docker.com/get-docker/) |
-| `oasdiff` | Level 1 diff validation | `go install github.com/tufin/oasdiff@latest` or `brew install oasdiff` |
-| Node.js + npm | Level 2 | [nodejs.org](https://nodejs.org) |
-| Playwright | Level 2 | `npx playwright install --with-deps chromium` |
-| VHS | Demo GIF | `brew install vhs` or [charm apt repo](https://charm.sh) |
-| ffmpeg, gifski, gifsicle | Demo GIF optimization | System package manager |
+| Tool                     | Required for            | Install                                                                |
+| ------------------------ | ----------------------- | ---------------------------------------------------------------------- |
+| Rust toolchain           | Build + unit tests      | [rustup.rs](https://rustup.rs)                                         |
+| Docker + Compose         | All integration tests   | [docs.docker.com](https://docs.docker.com/get-docker/)                 |
+| `oasdiff`                | Level 1 diff validation | `go install github.com/tufin/oasdiff@latest` or `brew install oasdiff` |
+| Node.js + npm            | Level 2                 | [nodejs.org](https://nodejs.org)                                       |
+| Playwright               | Level 2                 | `npx playwright install --with-deps chromium`                          |
+| VHS                      | Demo GIF                | `brew install vhs` or [charm apt repo](https://charm.sh)               |
+| ffmpeg, gifski, gifsicle | Demo GIF optimization   | System package manager                                                 |
 
 ## Build
 
@@ -55,16 +55,14 @@ docker compose down -v
 
 > **Gotcha**: The seed script sends requests through the mitmproxy proxy to `petstore:8080` (Docker service name), not `localhost`. This is intentional — traffic must flow through the proxy to be captured.
 
-## Level 2 — Toolshop + Playwright (~5 min)
+## Level 2 — crAPI + Playwright (~8 min)
 
 ```bash
 cd tests/integration/level2
 
-# Start Toolshop stack (Angular + Laravel + MariaDB + mitmproxy)
+# Start crAPI stack (identity + community + workshop + web + mongo + postgres + mailhog + mitmproxy)
 make up
-
-# Seed database (mandatory before any auth-dependent test)
-make seed
+# No seed needed — crAPI auto-seeds on first boot
 
 # Run Playwright scenarios
 npm install
@@ -88,14 +86,14 @@ make clean         # remove outputs
 
 ## Ports Reference
 
-| Stack | Service | Port |
-|-------|---------|------|
-| Level 1 | Petstore | 8080 |
-| Level 1 | mitmproxy | 8081 |
-| Level 2 | Angular UI | 4200 |
-| Level 2 | Laravel API | 8091 |
-| Level 2 | mitmproxy | 8080 |
-| Demo | Swagger UI | 8088 |
+| Stack   | Service    | Port |
+| ------- | ---------- | ---- |
+| Level 1 | Petstore   | 8080 |
+| Level 1 | mitmproxy  | 8081 |
+| Level 2 | crAPI web  | 8888 |
+| Level 2 | mailhog    | 8025 |
+| Level 2 | mitmproxy  | 8080 |
+| Demo    | Swagger UI | 8088 |
 
 ## Cleanup
 
@@ -103,8 +101,8 @@ All compose stacks use `docker compose down -v` to remove containers and volumes
 
 ## CI Workflows
 
-| Workflow | Trigger | Notes |
-|----------|---------|-------|
-| `integration-level1.yml` | Every PR | Naive (required) + strict (informational) |
-| `integration-level2.yml` | Nightly + manual dispatch | Full Toolshop + Playwright |
-| `demo-gif.yml` | Push to main (path-filtered) + manual dispatch | Terminal recording |
+| Workflow                 | Trigger                                        | Notes                                     |
+| ------------------------ | ---------------------------------------------- | ----------------------------------------- |
+| `integration-level1.yml` | Every PR                                       | Naive (required) + strict (informational) |
+| `integration-level2.yml` | Nightly + manual dispatch                      | Full crAPI + Playwright                   |
+| `demo-gif.yml`           | Push to main (path-filtered) + manual dispatch | Terminal recording                        |

@@ -1,24 +1,21 @@
-import { test, expect } from '@playwright/test';
-import { existsSync, statSync } from 'fs';
-import path from 'path';
+import { test } from "../fixtures/auth";
+import { expect } from "@playwright/test";
+import { existsSync, statSync } from "fs";
+import path from "path";
 
-test('smoke: homepage loads through mitmproxy and capture is non-empty', async ({ page }) => {
-  // Navigate to Toolshop homepage through the proxy
-  await page.goto('/');
+test("smoke: login and dashboard + flow capture verification", async ({
+  customerRequest,
+}) => {
+  const resp = await customerRequest.get("/identity/api/v2/user/dashboard");
+  expect(resp.ok()).toBe(true);
+  const body = await resp.json();
+  expect(body).toHaveProperty("email");
+  expect(body.email).toBe("test@example.com");
 
-  // Verify the page loaded
-  await expect(page).toHaveTitle(/Practice Software Testing/i);
+  // Give mitmproxy time to flush
+  await new Promise((r) => setTimeout(r, 2000));
 
-  // Verify some content is visible
-  await expect(page.locator('app-root')).toBeVisible();
-
-  // Check that the mitmproxy capture file exists and is non-empty
-  const flowPath = path.resolve(__dirname, '..', 'out', 'toolshop.flow');
-
-  // Give mitmproxy a moment to flush
-  await page.waitForTimeout(2000);
-
-  // The flow file should exist and be non-empty if traffic went through the proxy
+  const flowPath = path.resolve(__dirname, "..", "out", "crapi.flow");
   expect(existsSync(flowPath)).toBe(true);
   const stats = statSync(flowPath);
   expect(stats.size).toBeGreaterThan(0);

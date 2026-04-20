@@ -1,0 +1,10 @@
+x-path-templates:
+- /api/v3/pet
+- /api/v3/pet/findByStatus
+- /api/v3/pet/{id}
+- /api/v3/store/inventory
+- /api/v3/store/order
+- /api/v3/store/order/{id}
+- /api/v3/user
+- /api/v3/user/login
+- /api/v3/user/{id}

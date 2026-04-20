@@ -4,10 +4,10 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src/**'
-      - 'ci/demo/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+      - "src/**"
+      - "ci/demo/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
   workflow_dispatch:
 
 permissions:
@@ -34,50 +34,93 @@ jobs:
       - name: Build mitm2openapi
         run: cargo build --release
 
-      # Phase 1: Browser recording
-      - name: Install Playwright
-        working-directory: ci/demo
-        run: |
-          npm ci || npm install
-          npx playwright install --with-deps chromium
-
-      - name: Start Toolshop stack
+      - name: Start crAPI stack
         working-directory: tests/integration/level2
         run: |
+          # mitmproxy container runs as uid 1000 via gosu and cannot write
+          # the bind-mounted flow file when GHA workspace is owned by uid 1001.
+          mkdir -p out
+          touch out/crapi.flow
+          chmod 0777 out
+          chmod 0666 out/crapi.flow
           docker compose up -d
-          for i in $(seq 1 90); do
-            if docker compose ps laravel-api | grep -q healthy; then
+          for i in $(seq 1 120); do
+            if docker compose ps crapi-web | grep -q healthy; then
               echo "Services healthy after ${i}s"
               break
             fi
-            if [ "$i" -eq 90 ]; then
-              echo "ERROR: Services did not become healthy in 90s"
+            if [ "$i" -eq 120 ]; then
+              echo "ERROR: crapi-web did not become healthy in 120s"
               docker compose logs
               exit 1
             fi
             sleep 1
           done
-          docker compose exec -T laravel-api php artisan migrate:refresh --seed
+          echo "--- mitmproxy status ---"
+          docker compose ps mitmproxy
+          docker compose logs mitmproxy | tail -20
 
-      - name: Phase 1 — Browser recording
-        working-directory: ci/demo
+      - name: Phase 1 — Browser recording (via sidecar)
+        working-directory: tests/integration/level2
         run: |
-          mkdir -p out
-          npx playwright test phase1.spec.ts
-          # Move recorded video
-          mv test-results/*/video.webm out/phase1.webm || true
+          docker compose --profile test up -d playwright
+          # Run Playwright inside the sidecar and stage the video file to
+          # /tmp/phase1.webm inside the container.
+          docker compose exec -T playwright sh -c '
+            set -eux
+            cd /work/ci/demo
+            npm ci
+            npx playwright test --config=./playwright.config.ts phase1.spec.ts
+            WEBM=$(find test-results -name "video.webm" | head -1)
+            test -n "$WEBM"
+            cp "$WEBM" /tmp/phase1.webm
+            test -s /tmp/phase1.webm
+          '
+          # Stage the video to a RUNNER-side /tmp location that is not in
+          # any docker bind-mount. Subsequent steps copy it into ci/demo/out
+          # AT THE TIME they need it, avoiding whatever was wiping the file
+          # from ci/demo/out between Phase 1 and Stitch (likely related to
+          # the level2 compose bind-mount lifecycle).
+          PLAYWRIGHT_CID=$(docker compose ps -q playwright)
+          docker cp "$PLAYWRIGHT_CID:/tmp/phase1.webm" /tmp/phase1.webm
+          test -s /tmp/phase1.webm
+          echo "phase1.webm size: $(du -h /tmp/phase1.webm | cut -f1)"
 
-      # Phase 2: Terminal recording
-      - name: Install VHS
+      - name: Copy captured flow to demo dir
+        run: |
+          mkdir -p ci/demo/out
+          cp tests/integration/level2/out/crapi.flow ci/demo/out/demo.flow
+          test -s ci/demo/out/demo.flow
+
+      # Phase 2: Terminal recording.
+      # VHS hard-requires ttyd (terminal emulator) and ffmpeg at runtime.
+      # ffmpeg ships with ubuntu-24.04 runners; ttyd is not in the charm apt
+      # repo, so we pull a static x86_64 binary from tsl0922/ttyd releases.
+      # charmbracelet/vhs-action@v2 also installs these, but its bundled
+      # ffmpeg installer pins to a ffmpeg-n5.1 asset that no longer exists
+      # in BtbN/FFmpeg-Builds → "Failed to install ffmpeg". Manual install
+      # is more robust.
+      - name: Install VHS + ttyd
         run: |
           sudo mkdir -p /etc/apt/keyrings
-          curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list
-          sudo apt update && sudo apt install -y vhs
+          curl -fsSL https://repo.charm.sh/apt/gpg.key \
+            | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" \
+            | sudo tee /etc/apt/sources.list.d/charm.list
+          sudo apt-get update
+          sudo apt-get install -y vhs fonts-jetbrains-mono
+          TTYD_URL=$(curl -fsSL https://api.github.com/repos/tsl0922/ttyd/releases/latest \
+            | grep -oE '"browser_download_url": "[^"]+ttyd\.x86_64"' \
+            | head -1 | cut -d'"' -f4)
+          echo "Downloading ttyd from $TTYD_URL"
+          sudo curl -fsSL "$TTYD_URL" -o /usr/local/bin/ttyd
+          sudo chmod +x /usr/local/bin/ttyd
+          vhs --version
+          ttyd --version
+          ffmpeg -version | head -1
 
       - name: Phase 2 — Terminal recording
-        working-directory: ci/demo
-        run: vhs phase2.tape
+        run: vhs ci/demo/phase2.tape
 
       # Phase 3: Swagger UI recording
       - name: Generate OpenAPI spec
@@ -86,19 +129,29 @@ jobs:
           $GITHUB_WORKSPACE/target/release/mitm2openapi discover \
             -i out/demo.flow \
             -o out/templates.yaml \
-            -p "http://localhost:8091"
-          sed -i 's/^  ignore: /  /g' out/templates.yaml
+            -p "http://crapi-web"
+          sed -i 's/ignore://g' out/templates.yaml
           $GITHUB_WORKSPACE/target/release/mitm2openapi generate \
             -i out/demo.flow \
             -t out/templates.yaml \
             -o out/openapi.yaml \
-            -p "http://localhost:8091"
+            -p "http://crapi-web"
 
-      - name: Phase 3 — Swagger UI recording
+      - name: Phase 3 — Swagger UI recording (host)
         working-directory: ci/demo
         run: |
-          npx playwright test phase3.spec.ts
-          mv test-results/*/video.webm out/phase3.webm || true
+          # Phase 1's sidecar left node_modules/test-results owned by the
+          # container user. Nuke them as root via alpine so the host npm ci
+          # can recreate them cleanly with the runner uid.
+          docker run --rm -v "$PWD:/w" alpine \
+            sh -c 'rm -rf /w/node_modules /w/test-results'
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test --config=./playwright.config.ts phase3.spec.ts
+          WEBM=$(find test-results -name 'video.webm' | head -1)
+          test -n "$WEBM"
+          cp "$WEBM" out/phase3.webm
+          test -s out/phase3.webm
 
       # Stitching
       - name: Install gifski and gifsicle
@@ -109,11 +162,16 @@ jobs:
       - name: Stitch phases into demo GIF
         working-directory: ci/demo
         run: |
+          # Move the Phase 1 video into place right before stitching so
+          # nothing in the pipeline gets a chance to wipe it.
+          cp /tmp/phase1.webm out/phase1.webm
+          echo "--- ci/demo/out contents ---"
+          ls -la out/
           chmod +x build-gif.sh
           ./build-gif.sh
 
       # Teardown
-      - name: Teardown Toolshop
+      - name: Teardown crAPI
         if: always()
         working-directory: tests/integration/level2
         run: docker compose down -v || true

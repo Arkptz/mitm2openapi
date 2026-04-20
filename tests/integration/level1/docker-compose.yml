@@ -23,7 +23,25 @@ services:
     volumes:
       - ./fixtures:/flows
       - mitm-ca:/home/mitmproxy/.mitmproxy
+    healthcheck:
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(0 if s.connect_ex(('127.0.0.1',8081))==0 else 1)"
+      interval: 2s
+      timeout: 2s
+      retries: 10
     networks: [test-net]
+  curl:
+    image: curlimages/curl:8.11.1
+    profiles: ["test"]
+    working_dir: /work
+    volumes:
+      - ../../..:/work:rw
+    networks: [test-net]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep infinity"]
 volumes:
   petstore-data:
   mitm-ca:

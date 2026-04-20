@@ -26,5 +26,11 @@ result-*
 
 # integration test artifacts
 tests/integration/level1/fixtures/*.flow
+tests/integration/level1/out/
 tests/integration/level2/out/
 ci/demo/out/
+node_modules/
+tests/integration/level2/playwright-report/
+tests/integration/level2/test-results/
+ci/demo/test-results/
+ci/demo/playwright-report/
