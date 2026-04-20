@@ -35,6 +35,25 @@ mitm2openapi discover -i capture.flow -o templates.yaml -p "https://api.example.
 mitm2openapi generate -i capture.flow -t templates.yaml -o openapi.yaml -p "https://api.example.com"
 ```
 
+### Skip the manual edit
+
+If you know which paths you care about up front, use `--exclude-patterns`
+and `--include-patterns` to let `discover` do the curation:
+
+```bash
+mitm2openapi discover \
+  -i capture.flow -o templates.yaml -p "https://api.example.com" \
+  --exclude-patterns '/static/**,/images/**,*.css,*.js,*.svg' \
+  --include-patterns '/api/**,/v2/**'
+
+mitm2openapi generate \
+  -i capture.flow -t templates.yaml -o openapi.yaml -p "https://api.example.com"
+```
+
+Paths matching `--include-patterns` are auto-activated (emitted without
+the `ignore:` prefix). Paths matching `--exclude-patterns` are dropped
+entirely. Everything else still gets `ignore:` for manual review.
+
 ## CLI Reference
 
 ### `discover`
@@ -51,6 +70,8 @@ mitm2openapi discover [OPTIONS] -i <INPUT> -o <OUTPUT> -p <PREFIX>
 | `-o, --output <PATH>` | Output YAML templates file |
 | `-p, --prefix <URL>` | API prefix URL to filter requests |
 | `--format <FORMAT>` | Input format: `auto`, `har`, `mitmproxy` (default: `auto`) |
+| `--exclude-patterns <GLOBS>` | Comma-separated globs; matching paths are dropped entirely. `*` = single segment, `**` = any subtree. E.g. `/static/**,*.css` |
+| `--include-patterns <GLOBS>` | Comma-separated globs; matching paths are emitted without `ignore:` (auto-activated for `generate`) |
 
 ### `generate`
 

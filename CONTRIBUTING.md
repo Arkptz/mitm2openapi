@@ -84,6 +84,35 @@ make gif           # gifski + gifsicle optimization
 make clean         # remove outputs
 ```
 
+> **Phase 2 uses a real capture**, not a committed fixture. The GHA
+> workflow copies `tests/integration/level2/out/crapi.flow` (produced by
+> Phase 1) into `ci/demo/out/demo.flow` before running the tape. Locally,
+> do the same: run Phase 1 first, then `cp tests/integration/level2/out/crapi.flow ci/demo/out/demo.flow`.
+
+## Filtering `discover` output
+
+Captures from real apps include static assets (`/static/css/main.*.css`,
+`/images/*.svg`, etc.) which bloat the generated OpenAPI spec. Two flags
+on `discover` handle this:
+
+```bash
+mitm2openapi discover \
+  -i capture.flow -o templates.yaml -p http://api.example.com \
+  --exclude-patterns '/static/**,/images/**,*.css,*.js,*.svg,*.png,*.jpg' \
+  --include-patterns '/api/**,/v2/**'
+```
+
+- `--exclude-patterns`: paths matching any glob are **dropped entirely**
+  (not even emitted as `ignore:`).
+- `--include-patterns`: paths matching any glob are emitted **without**
+  the `ignore:` prefix (i.e. auto-activated for `generate`). Everything
+  else still gets `ignore:` for manual review.
+
+Globs: `*` matches a single path segment, `**` matches any subtree.
+
+Together they let `generate` run with no intermediate `sed` or editor
+step — useful for automated pipelines like the demo GIF.
+
 ## Ports Reference
 
 | Stack   | Service    | Port |
