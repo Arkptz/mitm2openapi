@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or Discussion
+    url: https://github.com/Arkptz/mitm2openapi/discussions
+    about: Ask questions, share ideas, or discuss usage in GitHub Discussions
