@@ -191,7 +191,7 @@ jobs:
 
       # Auto-commit
       - name: Auto-commit demo artifacts
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "docs: regenerate demo.gif [skip ci]"
           file_pattern: "docs/demo.gif docs/demo.mp4 README.md"
