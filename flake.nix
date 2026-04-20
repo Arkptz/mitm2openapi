@@ -50,6 +50,15 @@
       };
     in
     {
+      packages.${system}.default = pkgs.rustPlatform.buildRustPackage {
+        pname = "mitm2openapi";
+        version = "0.1.0";
+        src = ./.;
+        cargoLock.lockFile = ./Cargo.lock;
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [ pkgs.openssl ];
+      };
+
       devShells.${system}.default = pkgs.mkShell {
         buildInputs = [
           toolchain

@@ -1,0 +1,71 @@
+name: Bug Report
+description: Report a bug in mitm2openapi
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible.
+  - type: input
+    id: version
+    attributes:
+      label: mitm2openapi version
+      description: Output of `mitm2openapi --version`
+      placeholder: "e.g. 0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other (describe in additional info)
+    validations:
+      required: true
+  - type: dropdown
+    id: input-format
+    attributes:
+      label: Input Format
+      description: What kind of capture were you processing?
+      options:
+        - mitmproxy flow dump
+        - HAR (HTTP Archive)
+        - Not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Exact commands you ran, including `discover` and/or `generate` invocations
+      placeholder: |
+        1. Capture traffic with `mitmdump -w capture.flow`
+        2. Run `mitm2openapi discover -i capture.flow -o templates.yaml -p https://api.example.com`
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include full error output if any.
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Logs, screenshots, sample input (redacted if sensitive), or anything else that might help
+    validations:
+      required: false
