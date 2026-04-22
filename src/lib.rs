@@ -1,3 +1,5 @@
+#![deny(clippy::indexing_slicing)]
+
 //! # mitm2openapi
 //!
 //! Convert mitmproxy flow dumps and HAR files to OpenAPI 3.0 specifications.
@@ -27,6 +29,7 @@ pub mod path_matching;
 pub mod report;
 pub mod schema;
 pub mod tnetstring;
+pub(crate) mod type_hints;
 pub mod types;
 
 /// Maximum size of a single input file (2 GiB).

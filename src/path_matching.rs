@@ -94,27 +94,7 @@ fn path_to_regex_pattern(template: &str) -> std::result::Result<String, crate::e
     Ok(pattern)
 }
 
-/// Check if a string looks like a numeric value (all digits, possibly with leading minus).
-fn is_numeric(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-    let s = s.strip_prefix('-').unwrap_or(s);
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
-}
-
-/// Check if a string looks like a UUID (8-4-4-4-12 hex pattern).
-fn is_uuid_str(s: &str) -> bool {
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 5 {
-        return false;
-    }
-    let expected_lens = [8, 4, 4, 4, 12];
-    parts
-        .iter()
-        .zip(expected_lens.iter())
-        .all(|(part, &len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
-}
+use crate::type_hints::{is_numeric_string, is_uuid};
 
 /// Check if a path segment looks like a parameter value (numeric or UUID).
 ///
@@ -124,7 +104,7 @@ pub fn is_param_segment(segment: &str, custom_regex: Option<&Regex>) -> bool {
     if segment.is_empty() {
         return false;
     }
-    if is_numeric(segment) || is_uuid_str(segment) {
+    if is_numeric_string(segment) || is_uuid(segment) {
         return true;
     }
     if let Some(re) = custom_regex {
@@ -185,6 +165,7 @@ pub fn suggest_param_templates(paths: &[String], custom_regex: Option<&Regex>) -
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
