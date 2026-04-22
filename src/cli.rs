@@ -82,6 +82,10 @@ pub struct DiscoverArgs {
 
     #[arg(long, default_value_t = false)]
     pub allow_symlinks: bool,
+
+    /// Write a structured JSON processing report to the given path
+    #[arg(long)]
+    pub report: Option<PathBuf>,
 }
 
 #[derive(Parser, Debug)]
@@ -156,4 +160,8 @@ pub struct GenerateArgs {
 
     #[arg(long, default_value_t = false)]
     pub allow_symlinks: bool,
+
+    /// Write a structured JSON processing report to the given path
+    #[arg(long)]
+    pub report: Option<PathBuf>,
 }

@@ -24,6 +24,7 @@ pub mod mitmproxy_reader;
 pub mod output;
 pub mod params;
 pub mod path_matching;
+pub mod report;
 pub mod schema;
 pub mod tnetstring;
 pub mod types;
