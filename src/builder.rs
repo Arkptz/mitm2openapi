@@ -1285,4 +1285,88 @@ mod tests {
             Some("Core API".to_string())
         );
     }
+
+    #[test]
+    fn unknown_method_skipped() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req = MockRequest {
+            url: "https://api.example.com/pets".to_string(),
+            method: "FOOBAR".to_string(),
+            request_headers: vec![],
+            request_body: None,
+            response_status: Some(200),
+            response_reason: Some("OK".to_string()),
+            response_headers: None,
+            response_body: None,
+            response_content_type: None,
+        };
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        assert!(
+            spec.paths.paths.is_empty(),
+            "unknown method FOOBAR should not create any path entry"
+        );
+    }
+
+    #[test]
+    fn patch_method_honored() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req = MockRequest {
+            url: "https://api.example.com/pets/1".to_string(),
+            method: "PATCH".to_string(),
+            request_headers: vec![],
+            request_body: None,
+            response_status: Some(200),
+            response_reason: Some("OK".to_string()),
+            response_headers: None,
+            response_body: None,
+            response_content_type: None,
+        };
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        let path_item = match spec.paths.paths.get("/pets/1") {
+            Some(ReferenceOr::Item(item)) => item,
+            _ => panic!("expected path /pets/1 to exist"),
+        };
+        assert!(path_item.patch.is_some(), "PATCH operation should be set");
+        assert!(
+            path_item.get.is_none(),
+            "GET should not be set for a PATCH request"
+        );
+    }
+
+    #[test]
+    fn case_insensitive_method() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req = MockRequest {
+            url: "https://api.example.com/pets".to_string(),
+            method: "patch".to_string(),
+            request_headers: vec![],
+            request_body: None,
+            response_status: Some(200),
+            response_reason: Some("OK".to_string()),
+            response_headers: None,
+            response_body: None,
+            response_content_type: None,
+        };
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        let path_item = match spec.paths.paths.get("/pets") {
+            Some(ReferenceOr::Item(item)) => item,
+            _ => panic!("expected path /pets to exist"),
+        };
+        assert!(
+            path_item.patch.is_some(),
+            "lowercase 'patch' should be normalized to PATCH"
+        );
+    }
 }
