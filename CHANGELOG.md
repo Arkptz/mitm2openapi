@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/Arkptz/mitm2openapi/compare/v0.4.0...v0.4.1) - 2026-04-22
+
+### Fixed
+
+- *(builder)* use .get() in dedup_schema_variants to satisfy indexing_slicing lint
+- *(reader)* warn on skipped directory entries and malformed overrides
+- *(schema)* union array element schemas and tighten dict heuristic
+
+### Other
+
+- *(lint)* deny clippy::indexing_slicing at crate level
+- extract is_numeric_string and is_uuid to shared module
+- *(output)* lazy-init regex via LazyLock
+- *(error)* replace guarded unwrap sites with pattern matching
+
 ## [0.4.0](https://github.com/Arkptz/mitm2openapi/compare/v0.3.0...v0.4.0) - 2026-04-22
 
 ### Added
