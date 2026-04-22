@@ -189,6 +189,7 @@ pub fn endpoint_name(method: &str, path: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
