@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/Arkptz/mitm2openapi/compare/v0.5.0...v0.5.1) - 2026-04-22
+
+### Other
+
+- *(bench)* refresh benchmark results
+- *(bench)* drop small fixture tier
+- *(readme)* add benchmarks section linking to automated results
+- *(bench)* seed benchmarks.md with methodology and placeholders
+- regenerate demo.gif [skip ci]
+
 ## [0.5.0](https://github.com/Arkptz/mitm2openapi/compare/v0.4.1...v0.5.0) - 2026-04-22
 
 ### Added
