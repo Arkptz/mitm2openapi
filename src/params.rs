@@ -360,4 +360,32 @@ mod tests {
             "deleteOrgsOrgReposRepo"
         );
     }
+
+    #[test]
+    fn urlencoding_utf8_roundtrip() {
+        assert_eq!(urlencoding_decode("%C3%A9"), "é");
+        assert_eq!(urlencoding_decode("%E4%B8%AD"), "中");
+        assert_eq!(urlencoding_decode("%F0%9F%A6%80"), "🦀");
+    }
+
+    #[test]
+    fn urlencoding_rejects_overlong() {
+        let decoded = urlencoding_decode("%C0%80");
+        assert_ne!(decoded, "\0");
+        assert!(decoded.is_char_boundary(0));
+    }
+
+    #[test]
+    fn urlencoding_preserves_ascii() {
+        assert_eq!(urlencoding_decode("hello+world%21"), "hello world!");
+    }
+
+    #[test]
+    fn urlencoding_malformed_percent() {
+        let decoded = urlencoding_decode("%ZZ");
+        assert_eq!(decoded, "%");
+        let decoded2 = urlencoding_decode("%C");
+        assert_eq!(decoded2, "%");
+        assert_eq!(urlencoding_decode("100%"), "100%");
+    }
 }
