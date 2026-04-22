@@ -55,9 +55,6 @@ jobs:
             mdbook-admonish@1.18.0 \
             mdbook-mermaid@0.14.1
 
-      - name: Install mdbook-admonish assets
-        run: mdbook-admonish install book
-
       - name: Build book
         run: mdbook build book
 
