@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5](https://github.com/Arkptz/mitm2openapi/compare/v0.2.4...v0.2.5) - 2026-04-22
+
+### Fixed
+
+- *(builder)* skip requests with unknown HTTP methods instead of aliasing to GET
+
+### Other
+
+- *(builder)* verify unknown method is skipped and standard methods preserved
+
 ## [0.2.4](https://github.com/Arkptz/mitm2openapi/compare/v0.2.3...v0.2.4) - 2026-04-22
 
 ### Fixed
