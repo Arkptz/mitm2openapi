@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/Arkptz/mitm2openapi/compare/v0.1.2...v0.2.0) - 2026-04-22
+
+### Added
+
+- *(path_matching)* validate path parameter identifiers
+- *(cli)* expose --max-input-size, --max-payload-size, --max-depth, --max-body-size, --allow-symlinks
+- *(reader)* reject symlinks, non-regular files, and oversized inputs
+- *(schema)* enforce 64-level JSON recursion depth limit
+- *(tnetstring)* enforce 256-level recursion depth limit
+- *(tnetstring)* cap payload size at 256 MiB
+- *(error)* add typed variants for parse and input limits
+
+### Fixed
+
+- *(test)* gate symlink and FIFO tests behind cfg(unix)
+
+### Other
+
+- update Cargo.lock for globset dependency
+- *(security)* cover symlink, FIFO, and oversize input rejection
+- *(har)* bound format-detection read to 4 KiB
+- *(builder)* replace custom glob matcher with globset
+
 ## [0.1.2](https://github.com/Arkptz/mitm2openapi/compare/v0.1.1...v0.1.2) - 2026-04-22
 
 ### Other
