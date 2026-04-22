@@ -42,3 +42,30 @@ pub const MAX_SCHEMA_DEPTH: usize = 64;
 
 /// Maximum body size for response/request bodies (64 MiB).
 pub const MAX_BODY_SIZE: usize = 64 * 1024 * 1024;
+
+/// Validate that an input path is a regular file (not a symlink, FIFO, etc.)
+/// and within the configured size limit.
+pub fn validate_input_path(
+    path: &std::path::Path,
+    max_size: u64,
+    allow_symlinks: bool,
+) -> Result<(), error::Error> {
+    if !allow_symlinks && path.symlink_metadata()?.file_type().is_symlink() {
+        return Err(error::Error::SymlinkRejected {
+            path: path.to_path_buf(),
+        });
+    }
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Err(error::Error::NotRegularFile {
+            path: path.to_path_buf(),
+        });
+    }
+    if meta.len() > max_size {
+        return Err(error::Error::InputTooLarge {
+            size: meta.len(),
+            max: max_size,
+        });
+    }
+    Ok(())
+}
