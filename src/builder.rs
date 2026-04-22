@@ -27,6 +27,63 @@ pub fn glob_match(pattern: &str, path: &str) -> bool {
 /// `exclude_patterns`: paths matching any glob are dropped entirely (not even emitted as `ignore:`).
 /// `include_patterns`: paths matching any glob are emitted WITHOUT the `ignore:` prefix
 /// (i.e. auto-activated for `generate`). Non-matching paths still get `ignore:` for review.
+pub fn discover_paths_streaming(
+    requests: impl Iterator<Item = crate::error::Result<Box<dyn CapturedRequest>>>,
+    prefix: &str,
+    custom_regex: Option<&regex::Regex>,
+    exclude_patterns: &[String],
+    include_patterns: &[String],
+) -> Vec<String> {
+    let is_excluded = |path: &str| exclude_patterns.iter().any(|pat| glob_match(pat, path));
+    let is_included = |path: &str| include_patterns.iter().any(|pat| glob_match(pat, path));
+    let format_template = |path: &str| -> String {
+        if is_included(path) {
+            path.to_string()
+        } else {
+            format!("ignore:{}", path)
+        }
+    };
+
+    let mut seen_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    for req_result in requests {
+        let req = match req_result {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let url = req.get_url();
+        if !url.starts_with(prefix) {
+            continue;
+        }
+        let raw_path = &url[prefix.len()..];
+        let path_no_query = raw_path.split('?').next().unwrap_or(raw_path);
+        let path = if path_no_query.starts_with('/') {
+            path_no_query.to_string()
+        } else {
+            format!("/{}", path_no_query)
+        };
+        if is_excluded(&path) {
+            continue;
+        }
+        seen_paths.insert(path);
+    }
+
+    let paths_vec: Vec<String> = seen_paths.iter().cloned().collect();
+    let suggested = path_matching::suggest_param_templates(&paths_vec, custom_regex);
+
+    let mut all: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for p in &paths_vec {
+        all.insert(format_template(p));
+    }
+    for s in &suggested {
+        if !is_excluded(s) {
+            all.insert(format_template(s));
+        }
+    }
+
+    all.into_iter().collect()
+}
+
 pub fn discover_paths(
     requests: &[Box<dyn CapturedRequest>],
     prefix: &str,
@@ -84,7 +141,7 @@ pub struct OpenApiBuilder {
     prefix: String,
     config: Config,
     tags_overrides: Option<serde_json::Map<String, serde_json::Value>>,
-    templates: Vec<String>,
+    compiled_templates: path_matching::CompiledTemplates,
     spec: OpenAPI,
 }
 
@@ -203,7 +260,6 @@ fn has_operation(path_item: &PathItem, method: &str) -> bool {
 }
 
 impl OpenApiBuilder {
-    /// Create a new builder with the given prefix URL and config.
     pub fn new(prefix: &str, config: &Config, templates: Vec<String>) -> Self {
         let host = host_from_prefix(prefix);
         let title = config
@@ -227,12 +283,17 @@ impl OpenApiBuilder {
         };
 
         let tags_overrides = parse_tags_overrides(&config.tags_overrides);
+        let compiled_templates =
+            path_matching::CompiledTemplates::new(&templates).unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "Failed to compile templates, using empty set");
+                path_matching::CompiledTemplates::new(&[]).unwrap()
+            });
 
         Self {
             prefix: prefix.to_string(),
             config: config.clone(),
             tags_overrides,
-            templates,
+            compiled_templates,
             spec,
         }
     }
@@ -258,10 +319,10 @@ impl OpenApiBuilder {
             format!("/{}", path_no_query)
         };
 
-        let template_path = if self.templates.is_empty() {
+        let template_path = if self.compiled_templates.is_empty() {
             path.clone()
         } else {
-            match path_matching::match_path(&path, &self.templates) {
+            match self.compiled_templates.match_path(&path) {
                 Some(t) => t.to_string(),
                 None => return,
             }
