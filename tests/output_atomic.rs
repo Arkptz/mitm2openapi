@@ -55,8 +55,12 @@ fn partial_write_preserves_target() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn write_to_nonexistent_parent_fails_gracefully() {
+    // /nonexistent at filesystem root requires privilege on Unix; on Windows a
+    // leading slash without a drive letter is interpreted relative to the CWD,
+    // which would succeed and invert the assertion. Gate to Unix.
     let result =
         mitm2openapi::output::write_yaml("test\n", Path::new("/nonexistent/dir/spec.yaml"));
     assert!(result.is_err());
