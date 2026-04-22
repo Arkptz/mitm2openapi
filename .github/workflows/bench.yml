@@ -40,14 +40,18 @@ jobs:
             target
           key: bench-cargo-${{ hashFiles('Cargo.lock') }}
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
       - name: Install system tools (hyperfine, hey)
         run: |
           wget -q https://github.com/sharkdp/hyperfine/releases/download/v1.18.0/hyperfine_1.18.0_amd64.deb
           sudo dpkg -i hyperfine_1.18.0_amd64.deb
-          wget -q https://hey-release.s3.us-east-2.amazonaws.com/hey_linux_amd64 -O /usr/local/bin/hey
-          sudo chmod +x /usr/local/bin/hey
+          go install github.com/rakyll/hey@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           hyperfine --version
-          hey -h 2>&1 | head -1
+          "$(go env GOPATH)/bin/hey" -h 2>&1 | head -1 || true
 
       - name: Install Python mitmproxy2swagger
         run: |
