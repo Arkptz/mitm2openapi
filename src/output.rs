@@ -1,8 +1,14 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use crate::error::Error;
+
+static OPENAPI_VERSION_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(?m)^openapi: (\d+\.\d+\.\d+)\s*$")
+        .expect("OPENAPI_VERSION_RE is a valid regex literal")
+});
 
 /// Serialize an OpenAPI spec to a YAML string.
 ///
@@ -14,8 +20,7 @@ pub fn spec_to_yaml(spec: &openapiv3::OpenAPI) -> Result<String, Error> {
 
     // Post-process: quote the openapi version so YAML parsers don't treat it as a float.
     // Match `openapi: 3.0.3` (possibly with trailing whitespace) and replace with quoted form.
-    let yaml = regex::Regex::new(r"(?m)^openapi: (\d+\.\d+\.\d+)\s*$")
-        .expect("valid regex")
+    let yaml = OPENAPI_VERSION_RE
         .replace(&yaml, "openapi: '$1'")
         .into_owned();
 
@@ -85,6 +90,7 @@ pub fn write_yaml(content: &str, path: &Path) -> Result<(), Error> {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use openapiv3::OpenAPI;
