@@ -121,7 +121,6 @@ mitm2openapi generate [OPTIONS] -i <INPUT> -t <TEMPLATES> -o <OUTPUT> -p <PREFIX
 | `-o, --output <PATH>` | Output OpenAPI YAML file |
 | `-p, --prefix <URL>` | API prefix URL |
 | `--format <FORMAT>` | Input format: `auto`, `har`, `mitmproxy` (default: `auto`) |
-| `--param-regex <REGEX>` | Custom regex for parameter detection |
 | `--openapi-title <TITLE>` | Custom title for the spec |
 | `--openapi-version <VER>` | Custom spec version (default: `1.0.0`) |
 | `--exclude-headers <LIST>` | Comma-separated headers to exclude |
