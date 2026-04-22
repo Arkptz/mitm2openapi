@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6](https://github.com/Arkptz/mitm2openapi/compare/v0.2.5...v0.2.6) - 2026-04-22
+
+### Fixed
+
+- *(test)* gate Unix-specific path-failure test behind cfg(unix)
+- *(output)* write YAML via tempfile and atomic rename
+
+### Other
+
+- *(output)* verify atomic write preserves target on failure
+- *(deps)* move tempfile to runtime dependencies
+
 ## [0.2.5](https://github.com/Arkptz/mitm2openapi/compare/v0.2.4...v0.2.5) - 2026-04-22
 
 ### Fixed
