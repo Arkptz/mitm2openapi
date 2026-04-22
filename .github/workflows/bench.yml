@@ -1,0 +1,32 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install hyperfine --locked
+      - name: Build release
+        run: cargo build --release
+      - name: Run benchmark
+        run: |
+          hyperfine --warmup 2 --runs 5 \
+            --export-json bench.json \
+            'target/release/mitm2openapi discover -i testdata/flows/multiple.flow -o /tmp/tpl.yaml -p http://petstore:8080'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench.json
