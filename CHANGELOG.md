@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/Arkptz/mitm2openapi/compare/v0.2.1...v0.2.2) - 2026-04-22
+
+### Added
+
+- *(har)* add streaming HAR entry iterator
+
+### Other
+
+- *(readme)* mention HAR streaming in resource limits and supported formats
+- *(har)* verify streaming does not materialize all entries
+- *(reader)* switch HAR dispatch to streaming iterator
+- regenerate demo.gif [skip ci]
+
 ## [0.2.1](https://github.com/Arkptz/mitm2openapi/compare/v0.2.0...v0.2.1) - 2026-04-22
 
 ### Added
