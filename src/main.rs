@@ -20,16 +20,15 @@ fn main() -> Result<()> {
         Command::Discover(args) => {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting discovery");
 
-            let requests = read_input(
+            let req_iter = stream_input(
                 &args.input,
                 &args.format,
                 args.max_input_size,
                 args.allow_symlinks,
             )?;
-            info!(count = requests.len(), path = %args.input.display(), "Read requests");
 
-            let templates = builder::discover_paths(
-                &requests,
+            let templates = builder::discover_paths_streaming(
+                req_iter,
                 &args.prefix,
                 None,
                 &args.exclude_patterns,
@@ -66,13 +65,12 @@ fn main() -> Result<()> {
         Command::Generate(args) => {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting generation");
 
-            let requests = read_input(
+            let req_iter = stream_input(
                 &args.input,
                 &args.format,
                 args.max_input_size,
                 args.allow_symlinks,
             )?;
-            info!(count = requests.len(), path = %args.input.display(), "Read requests");
 
             let all_templates = load_templates(&args.templates).with_context(|| {
                 format!("failed to load templates from {}", args.templates.display())
@@ -105,7 +103,19 @@ fn main() -> Result<()> {
             };
 
             let mut builder = OpenApiBuilder::new(&args.prefix, &config, active_templates);
-            builder.add_requests(&requests);
+            let mut count = 0usize;
+            for req_result in req_iter {
+                match req_result {
+                    Ok(req) => {
+                        builder.add_request(req.as_ref());
+                        count += 1;
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Skipping request due to error");
+                    }
+                }
+            }
+            info!(count, path = %args.input.display(), "Processed requests");
             let spec = builder.build();
 
             let path_count = spec.paths.paths.len();
@@ -152,54 +162,50 @@ fn detect_format_score(path: &Path) -> (u8, u8) {
     (mitmproxy_score, har_score)
 }
 
-fn read_input(
+type RequestIter = Box<dyn Iterator<Item = mitm2openapi::error::Result<Box<dyn CapturedRequest>>>>;
+
+fn stream_input(
     path: &Path,
     format: &InputFormat,
     max_input_size: u64,
     allow_symlinks: bool,
-) -> Result<Vec<Box<dyn CapturedRequest>>> {
+) -> Result<RequestIter> {
     if !path.is_dir() {
         mitm2openapi::validate_input_path(path, max_input_size, allow_symlinks)
             .context("input file validation failed")?;
     }
     match format {
         InputFormat::Mitmproxy => {
-            debug!(path = %path.display(), "Reading as mitmproxy format");
+            debug!(path = %path.display(), "Streaming as mitmproxy format");
             if path.is_dir() {
-                mitmproxy_reader::read_mitmproxy_dir(path)
-                    .context("failed to read mitmproxy directory")
+                mitmproxy_reader::stream_mitmproxy_dir(path)
+                    .context("failed to stream mitmproxy directory")
             } else {
-                mitmproxy_reader::read_mitmproxy_file(path).context("failed to read mitmproxy file")
+                let iter = mitmproxy_reader::stream_mitmproxy_file(path)
+                    .context("failed to stream mitmproxy file")?;
+                Ok(Box::new(iter))
             }
         }
         InputFormat::Har => {
             debug!(path = %path.display(), "Reading as HAR format");
-            har_reader::read_har_file(path).context("failed to read HAR file")
+            // TODO: HAR streaming is planned for a future release.
+            let requests = har_reader::read_har_file(path).context("failed to read HAR file")?;
+            Ok(Box::new(requests.into_iter().map(Ok)))
         }
         InputFormat::Auto => {
             if path.is_dir() {
                 debug!(path = %path.display(), "Auto-detecting format for directory");
-                let mitmproxy_result = mitmproxy_reader::read_mitmproxy_dir(path);
+                let mitmproxy_result = mitmproxy_reader::stream_mitmproxy_dir(path);
                 let har_result = har_reader::read_har_file(path);
 
                 match (mitmproxy_result, har_result) {
-                    (Ok(mut m), Ok(mut h)) => {
-                        info!(
-                            mitmproxy_count = m.len(),
-                            har_count = h.len(),
-                            "Read from directory (both formats)"
-                        );
-                        m.append(&mut h);
-                        Ok(m)
+                    (Ok(m_iter), Ok(h_vec)) => {
+                        let combined: RequestIter =
+                            Box::new(m_iter.chain(h_vec.into_iter().map(Ok)));
+                        Ok(combined)
                     }
-                    (Ok(m), Err(_)) => {
-                        debug!("Directory contained only mitmproxy flows");
-                        Ok(m)
-                    }
-                    (Err(_), Ok(h)) => {
-                        debug!("Directory contained only HAR files");
-                        Ok(h)
-                    }
+                    (Ok(m_iter), Err(_)) => Ok(m_iter),
+                    (Err(_), Ok(h_vec)) => Ok(Box::new(h_vec.into_iter().map(Ok))),
                     (Err(e1), Err(_e2)) => {
                         Err(e1).context("failed to read directory as mitmproxy or HAR")
                     }
@@ -215,17 +221,24 @@ fn read_input(
 
                 if ms > hs {
                     info!(path = %path.display(), "Auto-detected as mitmproxy format");
-                    mitmproxy_reader::read_mitmproxy_file(path)
-                        .context("detected as mitmproxy format but failed to parse")
+                    let iter = mitmproxy_reader::stream_mitmproxy_file(path)
+                        .context("detected as mitmproxy format but failed to parse")?;
+                    Ok(Box::new(iter))
                 } else if hs > ms {
                     info!(path = %path.display(), "Auto-detected as HAR format");
-                    har_reader::read_har_file(path)
-                        .context("detected as HAR format but failed to parse")
+                    let requests = har_reader::read_har_file(path)
+                        .context("detected as HAR format but failed to parse")?;
+                    Ok(Box::new(requests.into_iter().map(Ok)))
                 } else if ms > 0 {
                     warn!(path = %path.display(), "Ambiguous format detection, trying mitmproxy first");
-                    mitmproxy_reader::read_mitmproxy_file(path)
-                        .or_else(|_| har_reader::read_har_file(path).map_err(anyhow::Error::from))
-                        .context("failed to parse as either mitmproxy or HAR")
+                    match mitmproxy_reader::stream_mitmproxy_file(path) {
+                        Ok(iter) => Ok(Box::new(iter)),
+                        Err(_) => {
+                            let requests = har_reader::read_har_file(path)
+                                .context("failed to parse as either mitmproxy or HAR")?;
+                            Ok(Box::new(requests.into_iter().map(Ok)))
+                        }
+                    }
                 } else {
                     bail!(
                         "Cannot auto-detect format for '{}'. Use --format to specify.",
