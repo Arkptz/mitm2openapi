@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/Arkptz/mitm2openapi/compare/v0.3.0...v0.4.0) - 2026-04-22
+
+### Added
+
+- feat!(builder): merge response schemas per status code
+- feat!(cli): remove unused --param-regex flag
+
+### Other
+
+- *(readme)* remove --param-regex mention from CLI reference
+- *(cli)* verify --param-regex is rejected as unknown argument
+- *(builder)* cover multi-status response aggregation
+- refactor!(error): mark Error enum as non_exhaustive
+- regenerate demo.gif [skip ci]
+
 ## [0.3.0](https://github.com/Arkptz/mitm2openapi/compare/v0.2.6...v0.3.0) - 2026-04-22
 
 ### Added
