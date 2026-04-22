@@ -3,10 +3,16 @@ name: Benchmark
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - '.github/workflows/bench.yml'
+  schedule:
+    - cron: '0 7 * * 1'  # Monday 07:00 UTC
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write  # write needed for auto-commit on schedule
 
 concurrency:
   group: bench-${{ github.workflow }}-${{ github.ref }}
@@ -15,18 +21,187 @@ concurrency:
 jobs:
   bench:
     runs-on: ubuntu-latest
+    services:
+      httpbin:
+        image: mccutchen/go-httpbin:latest
+        ports:
+          - 18000:8080
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install hyperfine --locked
-      - name: Build release
-        run: cargo build --release
-      - name: Run benchmark
-        run: |
-          hyperfine --warmup 2 --runs 5 \
-            --export-json bench.json \
-            'target/release/mitm2openapi discover -i testdata/flows/multiple.flow -o /tmp/tpl.yaml -p http://petstore:8080'
-      - uses: actions/upload-artifact@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v5
         with:
-          name: bench-results
-          path: bench.json
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: bench-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install system tools (hyperfine, hey)
+        run: |
+          wget -q https://github.com/sharkdp/hyperfine/releases/download/v1.18.0/hyperfine_1.18.0_amd64.deb
+          sudo dpkg -i hyperfine_1.18.0_amd64.deb
+          wget -q https://hey-release.s3.us-east-2.amazonaws.com/hey_linux_amd64 -O /usr/local/bin/hey
+          sudo chmod +x /usr/local/bin/hey
+          hyperfine --version
+          hey -h 2>&1 | head -1
+
+      - name: Install Python mitmproxy2swagger
+        run: |
+          pip install --user "mitmproxy<12" "ruamel.yaml<0.19" "mitmproxy2swagger==0.14.0"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          python -m pip show mitmproxy2swagger | head -3
+
+      - name: Verify Python tool
+        run: mitmproxy2swagger --help 2>&1 | head -3 || true
+
+      - name: Build Rust release
+        run: cargo build --release
+
+      - name: Wait for httpbin
+        run: |
+          for i in $(seq 1 10); do
+            if curl -sS http://localhost:18000/anything/probe > /dev/null; then
+              echo "httpbin ready"; break
+            fi
+            sleep 1
+          done
+
+      - name: Generate synthetic 80 MB flow
+        run: |
+          mkdir -p /tmp/bench
+          # Start mitmdump as background proxy capturing to file
+          mitmdump --listen-port 18888 -w /tmp/bench/big.flow --set ssl_insecure=true -q \
+            > /tmp/bench/mitmdump.log 2>&1 &
+          MITM_PID=$!
+          sleep 3
+
+          # Verify proxy works through to httpbin service
+          curl -sS -x http://localhost:18888 http://localhost:18000/anything/probe > /dev/null
+
+          # 8 endpoints x 5k requests each = 40k total
+          ENDPOINTS=(
+            "http://localhost:18000/anything/users"
+            "http://localhost:18000/anything/users/42"
+            "http://localhost:18000/anything/posts"
+            "http://localhost:18000/anything/posts/100/comments"
+            "http://localhost:18000/anything/products/sku/abc-xyz"
+            "http://localhost:18000/anything/orders/2026-04-20"
+            "http://localhost:18000/anything/search?q=widget&page=3"
+            "http://localhost:18000/anything/auth/refresh"
+          )
+          for url in "${ENDPOINTS[@]}"; do
+            hey -n 5000 -c 50 -x http://localhost:18888 "$url" > /dev/null 2>&1 &
+          done
+          wait
+          sleep 2
+          kill $MITM_PID || true
+          ls -lh /tmp/bench/big.flow
+
+      - name: Run benchmarks
+        id: bench
+        run: |
+          RUST=$(pwd)/target/release/mitm2openapi
+          OUT=/tmp/bench/out
+          mkdir -p $OUT
+
+          run_py() {
+            local flow=$1 prefix=$2
+            cp "$flow" $OUT/in.flow
+            mitmproxy2swagger -i $OUT/in.flow -o $OUT/py.yaml -p "$prefix" -f flow > /dev/null 2>&1
+            sed -i 's/^- ignore:/- /' $OUT/py.yaml
+            mitmproxy2swagger -i $OUT/in.flow -o $OUT/py.yaml -p "$prefix" -f flow > /dev/null 2>&1
+          }
+          run_rs() {
+            local flow=$1 prefix=$2
+            rm -f $OUT/tpl.yaml
+            "$RUST" discover -i "$flow" -o $OUT/tpl.yaml -p "$prefix" > /dev/null 2>&1
+            sed -i 's|^- ignore:|- |' $OUT/tpl.yaml
+            "$RUST" generate -i "$flow" -t $OUT/tpl.yaml -o $OUT/rs.yaml -p "$prefix" > /dev/null 2>&1
+          }
+          export -f run_py run_rs
+          export RUST OUT
+
+          # Petstore small fixture
+          hyperfine --warmup 3 --runs 10 --shell=bash \
+            --export-json $OUT/petstore.json \
+            --export-markdown $OUT/petstore.md \
+            --command-name "Python mitmproxy2swagger" "run_py '$(pwd)/testdata/flows/multiple.flow' 'http://petstore:8080'" \
+            --command-name "Rust mitm2openapi"         "run_rs '$(pwd)/testdata/flows/multiple.flow' 'http://petstore:8080'"
+
+          # Synthetic large
+          hyperfine --warmup 2 --runs 5 --shell=bash \
+            --export-json $OUT/synthetic.json \
+            --export-markdown $OUT/synthetic.md \
+            --command-name "Python mitmproxy2swagger" "run_py '/tmp/bench/big.flow' 'http://localhost:18000'" \
+            --command-name "Rust mitm2openapi"         "run_rs '/tmp/bench/big.flow' 'http://localhost:18000'"
+
+          # RSS measurements via /usr/bin/time
+          echo "## Peak RSS" > $OUT/rss.md
+          echo "| Dataset | Python RSS | Rust RSS |" >> $OUT/rss.md
+          echo "|---------|-----------:|---------:|" >> $OUT/rss.md
+          measure_rss() {
+            local name=$1 flow=$2 prefix=$3
+            cp "$flow" $OUT/in.flow
+            mitmproxy2swagger -i $OUT/in.flow -o $OUT/py.yaml -p "$prefix" -f flow > /dev/null 2>&1
+            local py_rss=$(/usr/bin/time -f '%M' mitmproxy2swagger -i $OUT/in.flow -o $OUT/py.yaml -p "$prefix" -f flow 2>&1 > /dev/null | tail -1)
+            rm -f $OUT/tpl.yaml
+            local rs_discover=$(/usr/bin/time -f '%M' "$RUST" discover -i "$flow" -o $OUT/tpl.yaml -p "$prefix" 2>&1 > /dev/null | tail -1)
+            sed -i 's|^- ignore:|- |' $OUT/tpl.yaml
+            local rs_generate=$(/usr/bin/time -f '%M' "$RUST" generate -i "$flow" -t $OUT/tpl.yaml -o $OUT/rs.yaml -p "$prefix" 2>&1 > /dev/null | tail -1)
+            local rs_peak=$(( rs_discover > rs_generate ? rs_discover : rs_generate ))
+            printf "| %s | %s KB | %s KB |\n" "$name" "$py_rss" "$rs_peak" >> $OUT/rss.md
+          }
+          measure_rss "Petstore (11 KB)" "$(pwd)/testdata/flows/multiple.flow" "http://petstore:8080"
+          measure_rss "Synthetic (~80 MB)" "/tmp/bench/big.flow" "http://localhost:18000"
+
+          # Combine summary
+          {
+            echo "# Benchmark results"
+            echo
+            echo "_Run: $(date -u '+%Y-%m-%d %H:%M UTC'), commit \`${GITHUB_SHA:0:8}\`, runner: $(uname -sr)_"
+            echo
+            echo "## Timing"
+            echo
+            echo "### Petstore (11 KB, 18 requests)"
+            cat $OUT/petstore.md
+            echo
+            echo "### Synthetic (~80 MB, 40k requests)"
+            cat $OUT/synthetic.md
+            echo
+            cat $OUT/rss.md
+          } > $OUT/summary.md
+
+          cat $OUT/summary.md
+          cp $OUT/summary.md bench-results.md
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ github.sha }}
+          path: |
+            /tmp/bench/out/*.json
+            /tmp/bench/out/*.md
+            bench-results.md
+          retention-days: 90
+
+      - name: Update docs/benchmarks.md
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          mkdir -p docs
+          {
+            echo "# Benchmarks"
+            echo
+            echo "Generated by the [benchmark workflow](.github/workflows/bench.yml)."
+            echo
+            cat bench-results.md
+          } > docs/benchmarks.md
+          git diff --quiet docs/benchmarks.md && { echo "no change"; exit 0; }
+          git config user.name arkptz
+          git config user.email arkptz@gmail.com
+          git add docs/benchmarks.md
+          git commit -m "docs(bench): refresh benchmark results"
+          git push
