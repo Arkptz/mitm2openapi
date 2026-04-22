@@ -199,10 +199,24 @@ fn parse_length<R: Read>(reader: &mut TrackingReader<R>) -> Result<Option<usize>
 }
 
 fn parse_value<R: Read>(reader: &mut TrackingReader<R>) -> Result<Option<TNetValue>, Error> {
+    parse_value_capped(reader, crate::MAX_PAYLOAD_SIZE)
+}
+
+fn parse_value_capped<R: Read>(
+    reader: &mut TrackingReader<R>,
+    max_payload: usize,
+) -> Result<Option<TNetValue>, Error> {
     let len = match parse_length(reader)? {
         Some(l) => l,
         None => return Ok(None),
     };
+
+    if len > max_payload {
+        return Err(Error::TNetStringPayloadTooLarge {
+            len,
+            max: max_payload,
+        });
+    }
 
     let mut data = vec![0u8; len];
     if len > 0 {
@@ -696,6 +710,19 @@ mod tests {
             values.len() > 1,
             "multiple.flow should contain multiple flows, got {}",
             values.len()
+        );
+    }
+
+    #[test]
+    fn payload_size_cap() {
+        // A tnetstring claiming a huge payload should be rejected before allocating
+        let input = b"999999999999:X,";
+        let mut cursor = std::io::Cursor::new(input.as_slice());
+        let results = parse_all_lenient(&mut cursor);
+        let first = results.into_iter().next().expect("should yield one result");
+        assert!(
+            matches!(first, Err(Error::TNetStringPayloadTooLarge { .. })),
+            "expected TNetStringPayloadTooLarge, got {first:?}"
         );
     }
 
