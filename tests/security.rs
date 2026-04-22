@@ -1,9 +1,10 @@
 use std::io::Write;
-use std::os::unix::fs as unix_fs;
 use tempfile::TempDir;
 
+#[cfg(unix)]
 #[test]
 fn symlink_rejected_by_default() {
+    use std::os::unix::fs as unix_fs;
     let dir = TempDir::new().unwrap();
     let real = dir.path().join("real.flow");
     std::fs::write(&real, b"1:X,").unwrap();
@@ -17,8 +18,10 @@ fn symlink_rejected_by_default() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn symlink_allowed_when_opted_in() {
+    use std::os::unix::fs as unix_fs;
     let dir = TempDir::new().unwrap();
     let real = dir.path().join("real.flow");
     std::fs::write(&real, b"1:X,").unwrap();
@@ -32,6 +35,7 @@ fn symlink_allowed_when_opted_in() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn fifo_rejected() {
     let dir = TempDir::new().unwrap();
