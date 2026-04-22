@@ -1,4 +1,3 @@
-# NOTE: gated with `if: false` until P4.1 ships actual fuzz targets. Flip the flag then.
 name: Fuzz
 
 on:
@@ -6,13 +5,16 @@ on:
     - cron: "0 3 * * 0" # weekly, Sunday 03:00 UTC
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   fuzz-tnetstring:
     name: Fuzz tnetstring parser
     runs-on: ubuntu-latest
-    if: false
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
@@ -20,4 +22,3 @@ jobs:
         run: cargo install cargo-fuzz
       - name: Run fuzzer
         run: cargo fuzz run tnetstring -- -max_total_time=600
-        working-directory: fuzz
