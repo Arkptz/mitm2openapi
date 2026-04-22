@@ -20,7 +20,12 @@ fn main() -> Result<()> {
         Command::Discover(args) => {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting discovery");
 
-            let requests = read_input(&args.input, &args.format)?;
+            let requests = read_input(
+                &args.input,
+                &args.format,
+                args.max_input_size,
+                args.allow_symlinks,
+            )?;
             info!(count = requests.len(), path = %args.input.display(), "Read requests");
 
             let templates = builder::discover_paths(
@@ -61,7 +66,12 @@ fn main() -> Result<()> {
         Command::Generate(args) => {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting generation");
 
-            let requests = read_input(&args.input, &args.format)?;
+            let requests = read_input(
+                &args.input,
+                &args.format,
+                args.max_input_size,
+                args.allow_symlinks,
+            )?;
             info!(count = requests.len(), path = %args.input.display(), "Read requests");
 
             let all_templates = load_templates(&args.templates).with_context(|| {
@@ -142,7 +152,16 @@ fn detect_format_score(path: &Path) -> (u8, u8) {
     (mitmproxy_score, har_score)
 }
 
-fn read_input(path: &Path, format: &InputFormat) -> Result<Vec<Box<dyn CapturedRequest>>> {
+fn read_input(
+    path: &Path,
+    format: &InputFormat,
+    max_input_size: u64,
+    allow_symlinks: bool,
+) -> Result<Vec<Box<dyn CapturedRequest>>> {
+    if !path.is_dir() {
+        mitm2openapi::validate_input_path(path, max_input_size, allow_symlinks)
+            .context("input file validation failed")?;
+    }
     match format {
         InputFormat::Mitmproxy => {
             debug!(path = %path.display(), "Reading as mitmproxy format");

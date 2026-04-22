@@ -213,7 +213,6 @@ fn parse_flow(flow: &TNetValue) -> Result<MitmproxyFlowWrapper> {
 }
 
 pub fn read_mitmproxy_file(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
-    crate::validate_input_path(path, crate::MAX_INPUT_SIZE, false)?;
     let data = std::fs::read(path)?;
     let mut cursor = std::io::Cursor::new(data);
     let values = tnetstring::parse_all_lenient(&mut cursor);

@@ -30,6 +30,23 @@ pub enum InputFormat {
     Mitmproxy,
 }
 
+fn parse_byte_size(s: &str) -> Result<u64, String> {
+    let s = s.trim();
+    let (num_str, multiplier) = if let Some(n) = s.strip_suffix("GiB") {
+        (n.trim(), 1024 * 1024 * 1024u64)
+    } else if let Some(n) = s.strip_suffix("MiB") {
+        (n.trim(), 1024 * 1024u64)
+    } else if let Some(n) = s.strip_suffix("KiB") {
+        (n.trim(), 1024u64)
+    } else {
+        (s, 1u64)
+    };
+    num_str
+        .parse::<u64>()
+        .map(|n| n * multiplier)
+        .map_err(|e| format!("invalid size: {e}"))
+}
+
 #[derive(Parser, Debug)]
 pub struct DiscoverArgs {
     /// Input file or directory path
@@ -59,6 +76,12 @@ pub struct DiscoverArgs {
     /// `ignore:` so you can review it. Saves a manual sed step.
     #[arg(long, value_delimiter = ',')]
     pub include_patterns: Vec<String>,
+
+    #[arg(long, value_parser = parse_byte_size, default_value = "2GiB")]
+    pub max_input_size: u64,
+
+    #[arg(long, default_value_t = false)]
+    pub allow_symlinks: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -118,4 +141,19 @@ pub struct GenerateArgs {
     /// JSON string for tag overrides
     #[arg(long)]
     pub tags_overrides: Option<String>,
+
+    #[arg(long, value_parser = parse_byte_size, default_value = "2GiB")]
+    pub max_input_size: u64,
+
+    #[arg(long, value_parser = parse_byte_size, default_value = "256MiB")]
+    pub max_payload_size: u64,
+
+    #[arg(long, default_value_t = 256)]
+    pub max_depth: usize,
+
+    #[arg(long, value_parser = parse_byte_size, default_value = "64MiB")]
+    pub max_body_size: u64,
+
+    #[arg(long, default_value_t = false)]
+    pub allow_symlinks: bool,
 }

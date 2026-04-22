@@ -156,7 +156,6 @@ pub fn read_har_file(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
         }
         Ok(all)
     } else {
-        crate::validate_input_path(path, crate::MAX_INPUT_SIZE, false)?;
         let bytes = std::fs::read(path)?;
         debug!(path = %path.display(), "Parsing HAR file");
         parse_har_bytes(&bytes)
