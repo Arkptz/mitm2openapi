@@ -83,6 +83,11 @@ pub struct DiscoverArgs {
     #[arg(long, default_value_t = false)]
     pub allow_symlinks: bool,
 
+    /// Treat warnings as errors. Exits non-zero if any cap fires,
+    /// flow is rejected, or parse diagnostic is emitted.
+    #[arg(long, default_value_t = false)]
+    pub strict: bool,
+
     /// Write a structured JSON processing report to the given path
     #[arg(long)]
     pub report: Option<PathBuf>,
@@ -156,6 +161,11 @@ pub struct GenerateArgs {
 
     #[arg(long, default_value_t = false)]
     pub allow_symlinks: bool,
+
+    /// Treat warnings as errors. Exits non-zero if any cap fires,
+    /// flow is rejected, or parse diagnostic is emitted.
+    #[arg(long, default_value_t = false)]
+    pub strict: bool,
 
     /// Write a structured JSON processing report to the given path
     #[arg(long)]

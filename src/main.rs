@@ -12,15 +12,27 @@ use mitm2openapi::output;
 use mitm2openapi::report::ProcessingReport;
 use mitm2openapi::types::{CapturedRequest, Config};
 
-fn main() -> Result<()> {
+fn main() {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
 
+    let result = run(cli);
+    match result {
+        Ok(exit_code) => std::process::exit(exit_code),
+        Err(e) => {
+            eprintln!("Error: {e:?}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run(cli: Cli) -> Result<i32> {
     match cli.command {
         Command::Discover(args) => {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting discovery");
 
+            let strict = args.strict;
             let mut report = ProcessingReport::new();
             report.input.path = args.input.display().to_string();
             report.input.format = format!("{:?}", args.format);
@@ -35,13 +47,24 @@ fn main() -> Result<()> {
                 args.allow_symlinks,
             )?;
 
+            let counting_iter = CountingIterator::new(req_iter);
+            let error_count = counting_iter.error_count.clone();
+
             let templates = builder::discover_paths_streaming(
-                req_iter,
+                counting_iter,
                 &args.prefix,
                 None,
                 &args.exclude_patterns,
                 &args.include_patterns,
             );
+
+            let errors_seen = error_count.get();
+            if errors_seen > 0 {
+                report
+                    .events
+                    .parse_error
+                    .insert("parse errors during discovery".to_string(), errors_seen);
+            }
 
             let merged = if args.output.exists() {
                 let existing = load_templates(&args.output)
@@ -78,10 +101,13 @@ fn main() -> Result<()> {
                 merged.len(),
                 args.output.display()
             );
+
+            check_strict(strict, &report)
         }
         Command::Generate(args) => {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting generation");
 
+            let strict = args.strict;
             let mut report = ProcessingReport::new();
             report.input.path = args.input.display().to_string();
             report.input.format = format!("{:?}", args.format);
@@ -168,10 +194,52 @@ fn main() -> Result<()> {
                 path_count,
                 args.output.display()
             );
+
+            check_strict(strict, &report)
         }
     }
+}
 
-    Ok(())
+fn check_strict(strict: bool, report: &ProcessingReport) -> Result<i32> {
+    if strict {
+        let event_total = report.events.total();
+        if event_total > 0 {
+            eprintln!(
+                "strict mode: {} event(s) recorded (caps fired, rejections, or parse errors); exiting with code 2",
+                event_total
+            );
+            return Ok(2);
+        }
+    }
+    Ok(0)
+}
+
+use std::cell::Cell;
+
+struct CountingIterator {
+    inner: RequestIter,
+    error_count: std::rc::Rc<Cell<u64>>,
+}
+
+impl CountingIterator {
+    fn new(inner: RequestIter) -> Self {
+        Self {
+            inner,
+            error_count: std::rc::Rc::new(Cell::new(0)),
+        }
+    }
+}
+
+impl Iterator for CountingIterator {
+    type Item = mitm2openapi::error::Result<Box<dyn CapturedRequest>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.inner.next()?;
+        if item.is_err() {
+            self.error_count.set(self.error_count.get() + 1);
+        }
+        Some(item)
+    }
 }
 
 /// Heuristic scoring for format auto-detection.

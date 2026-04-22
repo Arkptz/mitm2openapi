@@ -350,13 +350,13 @@ pub fn stream_mitmproxy_file(
                         Ok(wrapper) => Some(Ok(Box::new(wrapper) as Box<dyn CapturedRequest>)),
                         Err(e) => {
                             warn!(path = %display_path, error = %e, "Skipping corrupt flow");
-                            None
+                            Some(Err(e))
                         }
                     }
                 }
                 Err(e) => {
                     warn!(path = %display_path, error = %e, "Skipping unparseable flow entry");
-                    None
+                    Some(Err(e))
                 }
             },
         ),

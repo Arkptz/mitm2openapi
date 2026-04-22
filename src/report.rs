@@ -36,6 +36,13 @@ pub struct EventCounters {
     pub parse_error: HashMap<String, u64>,
 }
 
+impl EventCounters {
+    pub fn total(&self) -> u64 {
+        let sum = |m: &HashMap<String, u64>| -> u64 { m.values().sum() };
+        sum(&self.cap_fired) + sum(&self.rejected) + sum(&self.parse_error)
+    }
+}
+
 impl ProcessingReport {
     pub fn new() -> Self {
         Self {
