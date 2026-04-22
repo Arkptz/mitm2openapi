@@ -259,7 +259,7 @@ Format is auto-detected from file content. Use `--format` to override.
 Automated CI benchmark runs weekly against the Python original
 ([`mitmproxy2swagger`](https://github.com/alufers/mitmproxy2swagger)). See
 [docs/benchmarks.md](docs/benchmarks.md) for the latest timing and memory
-comparison on small (Petstore) and large (~80 MB synthetic) captures, or
+comparison on a ~80 MB synthetic capture, or
 trigger a fresh run via
 [Actions → Benchmark](../../actions/workflows/bench.yml).
 
