@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use crate::error::Error;
@@ -58,11 +59,28 @@ pub fn templates_to_yaml(templates: &[String]) -> Result<String, Error> {
 }
 
 /// Write a YAML string to a file, creating parent directories if needed.
+///
+/// Uses an atomic write strategy: content is first written to a temporary file
+/// in the same directory, then renamed into place. If the write fails (e.g.
+/// disk full, permission denied), the original target file is left unchanged.
 pub fn write_yaml(content: &str, path: &Path) -> Result<(), Error> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, content)?;
+    let parent = path.parent().ok_or_else(|| {
+        Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "output path has no parent directory",
+        ))
+    })?;
+    // Handle empty parent (relative path like "spec.yaml" → parent is "")
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    fs::create_dir_all(parent)?;
+
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    tmp.write_all(content.as_bytes())?;
+    tmp.persist(path).map_err(|e| Error::Io(e.error))?;
     Ok(())
 }
 
