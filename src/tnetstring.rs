@@ -199,12 +199,14 @@ fn parse_length<R: Read>(reader: &mut TrackingReader<R>) -> Result<Option<usize>
 }
 
 fn parse_value<R: Read>(reader: &mut TrackingReader<R>) -> Result<Option<TNetValue>, Error> {
-    parse_value_capped(reader, crate::MAX_PAYLOAD_SIZE)
+    parse_value_with_depth(reader, 0, crate::MAX_PAYLOAD_SIZE, crate::MAX_DEPTH)
 }
 
-fn parse_value_capped<R: Read>(
+fn parse_value_with_depth<R: Read>(
     reader: &mut TrackingReader<R>,
+    depth: usize,
     max_payload: usize,
+    max_depth: usize,
 ) -> Result<Option<TNetValue>, Error> {
     let len = match parse_length(reader)? {
         Some(l) => l,
@@ -270,11 +272,23 @@ fn parse_value_capped<R: Read>(
             TNetValue::Null
         }
         b']' => {
-            let items = parse_nested_list(&data, reader.offset - len - 1)?;
+            let items = parse_nested_list(
+                &data,
+                reader.offset - len - 1,
+                depth,
+                max_payload,
+                max_depth,
+            )?;
             TNetValue::List(items)
         }
         b'}' => {
-            let pairs = parse_nested_dict(&data, reader.offset - len - 1)?;
+            let pairs = parse_nested_dict(
+                &data,
+                reader.offset - len - 1,
+                depth,
+                max_payload,
+                max_depth,
+            )?;
             TNetValue::Dict(pairs)
         }
         _ => {
@@ -285,14 +299,28 @@ fn parse_value_capped<R: Read>(
     Ok(Some(value))
 }
 
-fn parse_nested_list(data: &[u8], base_offset: usize) -> Result<Vec<TNetValue>, Error> {
+fn parse_nested_list(
+    data: &[u8],
+    base_offset: usize,
+    parent_depth: usize,
+    max_payload: usize,
+    max_depth: usize,
+) -> Result<Vec<TNetValue>, Error> {
+    let child_depth = parent_depth + 1;
+    if child_depth > max_depth {
+        return Err(Error::TNetStringDepthExceeded {
+            depth: child_depth,
+            max: max_depth,
+        });
+    }
     let mut items = Vec::new();
     let mut cursor = std::io::Cursor::new(data);
     let mut reader = TrackingReader {
         inner: &mut cursor,
         offset: base_offset,
     };
-    while let Some(val) = parse_value(&mut reader)? {
+    while let Some(val) = parse_value_with_depth(&mut reader, child_depth, max_payload, max_depth)?
+    {
         items.push(val);
     }
     Ok(items)
@@ -301,15 +329,26 @@ fn parse_nested_list(data: &[u8], base_offset: usize) -> Result<Vec<TNetValue>, 
 fn parse_nested_dict(
     data: &[u8],
     base_offset: usize,
+    parent_depth: usize,
+    max_payload: usize,
+    max_depth: usize,
 ) -> Result<Vec<(TNetValue, TNetValue)>, Error> {
+    let child_depth = parent_depth + 1;
+    if child_depth > max_depth {
+        return Err(Error::TNetStringDepthExceeded {
+            depth: child_depth,
+            max: max_depth,
+        });
+    }
     let mut pairs = Vec::new();
     let mut cursor = std::io::Cursor::new(data);
     let mut reader = TrackingReader {
         inner: &mut cursor,
         offset: base_offset,
     };
-    while let Some(key) = parse_value(&mut reader)? {
-        let value = parse_value(&mut reader)?
+    while let Some(key) = parse_value_with_depth(&mut reader, child_depth, max_payload, max_depth)?
+    {
+        let value = parse_value_with_depth(&mut reader, child_depth, max_payload, max_depth)?
             .ok_or_else(|| reader.make_error("unexpected EOF: dict key without value".into()))?;
         pairs.push((key, value));
     }
@@ -710,6 +749,35 @@ mod tests {
             values.len() > 1,
             "multiple.flow should contain multiple flows, got {}",
             values.len()
+        );
+    }
+
+    #[test]
+    fn depth_cap() {
+        // Build 300 nested lists: "N:[N:[...0:~...]...]"
+        let depth = 300usize;
+        let mut encoded = Vec::new();
+        // Inner-most: null value "0:~"
+        let mut inner = b"0:~".to_vec();
+        for _ in 0..depth {
+            // Wrap in list: "<len>:<inner>]"
+            let wrapped = format!("{}:", inner.len()).into_bytes();
+            let mut next = Vec::with_capacity(wrapped.len() + inner.len() + 1);
+            next.extend_from_slice(&wrapped);
+            next.extend_from_slice(&inner);
+            next.push(b']');
+            inner = next;
+        }
+        encoded.extend_from_slice(&inner);
+
+        let mut cursor = std::io::Cursor::new(encoded);
+        let results = parse_all_lenient(&mut cursor);
+        let has_depth_error = results
+            .into_iter()
+            .any(|r| matches!(r, Err(Error::TNetStringDepthExceeded { .. })));
+        assert!(
+            has_depth_error,
+            "expected TNetStringDepthExceeded for 300-level nesting"
         );
     }
 
