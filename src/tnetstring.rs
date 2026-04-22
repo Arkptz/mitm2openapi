@@ -9,6 +9,8 @@
 
 use std::io::Read;
 
+use tracing::warn;
+
 use crate::error::Error;
 
 /// Maximum number of digits in the length prefix (mitmproxy enforces 12).
@@ -375,6 +377,26 @@ pub fn parse_all(reader: &mut impl Read) -> Result<Vec<TNetValue>, Error> {
     Ok(values)
 }
 
+pub(crate) fn classify_error_kind(error: &Error) -> &'static str {
+    match error {
+        Error::TNetStringPayloadTooLarge { .. } => "length_too_large",
+        Error::TNetStringDepthExceeded { .. } => "nesting_too_deep",
+        Error::Io(_) => "io_error",
+        Error::TNetParse { message, .. } => {
+            if message.contains("unexpected end of input") || message.contains("unexpected EOF") {
+                "truncated"
+            } else if message.contains("length prefix") {
+                "invalid_length_prefix"
+            } else if message.contains("unknown type tag") {
+                "unknown_tag"
+            } else {
+                "parse_error"
+            }
+        }
+        _ => "other",
+    }
+}
+
 /// Parse all TNetValues leniently — returns an iterator of Result<TNetValue>.
 /// On error, stops iteration (remaining data after a corrupt entry is unrecoverable
 /// in tnetstring format since we lose framing).
@@ -386,6 +408,15 @@ pub fn parse_all_lenient(reader: &mut impl Read) -> Vec<Result<TNetValue, Error>
             Ok(Some(val)) => results.push(Ok(val)),
             Ok(None) => break,
             Err(e) => {
+                let error_kind = classify_error_kind(&e);
+                warn!(
+                    event = "tnetstring_parse_halted",
+                    byte_offset = tracking.offset,
+                    parsed_so_far = results.len(),
+                    error_kind = error_kind,
+                    error = %e,
+                    "tnetstring parser stopped at corruption; subsequent flows dropped"
+                );
                 results.push(Err(e));
                 break;
             }
@@ -438,6 +469,15 @@ impl<R: Read> Iterator for TNetStringIter<R> {
                 None
             }
             Err(e) => {
+                let error_kind = classify_error_kind(&e);
+                warn!(
+                    event = "tnetstring_parse_halted",
+                    byte_offset = self.reader.offset,
+                    parsed_so_far = "iterator_mode",
+                    error_kind = error_kind,
+                    error = %e,
+                    "tnetstring parser stopped at corruption; subsequent flows dropped"
+                );
                 self.done = true;
                 Some(Err(e))
             }
