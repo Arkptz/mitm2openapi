@@ -3,12 +3,14 @@ use openapiv3::{
     Info, MediaType, OpenAPI, Operation, PathItem, Paths, ReferenceOr, RequestBody, Response,
     Responses, Server, StatusCode,
 };
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::params;
 use crate::path_matching;
 use crate::schema;
 use crate::types::{CapturedRequest, Config};
+
+const MAX_FORM_FIELDS: usize = 1000;
 
 pub fn glob_match(pattern: &str, path: &str) -> bool {
     let Ok(glob) = globset::GlobBuilder::new(pattern)
@@ -209,12 +211,21 @@ fn parse_body(body: &[u8], content_type: Option<&str>) -> Option<(String, serde_
     }
 
     if ct_lower.contains("form-urlencoded") {
-        // Parse key=value&key2=value2 into a JSON object
         if let Ok(body_str) = std::str::from_utf8(body) {
             let mut map = serde_json::Map::new();
+            let mut count = 0usize;
             for pair in body_str.split('&') {
+                if count >= MAX_FORM_FIELDS {
+                    warn!(
+                        event = "form_fields_truncated",
+                        max = MAX_FORM_FIELDS,
+                        "form-urlencoded body exceeds field limit, truncating"
+                    );
+                    break;
+                }
                 if let Some((k, v)) = pair.split_once('=') {
                     map.insert(k.to_string(), serde_json::Value::String(v.to_string()));
+                    count += 1;
                 }
             }
             if !map.is_empty() {
@@ -596,6 +607,26 @@ mod tests {
         assert_eq!(ct, "application/x-www-form-urlencoded");
         assert_eq!(val["name"], "test");
         assert_eq!(val["age"], "30");
+    }
+
+    #[test]
+    fn parse_body_form_fields_cap() {
+        let mut pairs: Vec<String> = Vec::new();
+        for i in 0..MAX_FORM_FIELDS + 100 {
+            pairs.push(format!("key{i}=val{i}"));
+        }
+        let body_str = pairs.join("&");
+        let (_, val) = parse_body(
+            body_str.as_bytes(),
+            Some("application/x-www-form-urlencoded"),
+        )
+        .unwrap();
+        let obj = val.as_object().unwrap();
+        assert_eq!(
+            obj.len(),
+            MAX_FORM_FIELDS,
+            "form fields should be capped at {MAX_FORM_FIELDS}"
+        );
     }
 
     #[test]
