@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/Arkptz/mitm2openapi/compare/v0.2.2...v0.2.3) - 2026-04-22
+
+### Fixed
+
+- *(builder)* cap form-field count per request at 1000
+- *(har)* validate schemes and status codes, log base64 failures, cap bodies
+- *(reader)* validate port/status ranges, enforce strict UTF-8, and cap field sizes
+
+### Other
+
+- *(readme)* document per-field size and validation limits
+
 ## [0.2.2](https://github.com/Arkptz/mitm2openapi/compare/v0.2.1...v0.2.2) - 2026-04-22
 
 ### Added
