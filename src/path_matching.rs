@@ -15,6 +15,59 @@ fn is_valid_param_ident(name: &str) -> bool {
 }
 
 pub fn path_to_regex(template: &str) -> Result<Regex, crate::error::Error> {
+    let pattern = path_to_regex_pattern(template)?;
+    Regex::new(&pattern)
+        .map_err(|e| crate::error::Error::Schema(format!("invalid path regex: {}", e)))
+}
+
+/// Match a URL path against a list of templates. Returns the first matching template.
+///
+/// First match wins — template order matters.
+pub fn match_path<'a>(path: &str, templates: &'a [String]) -> Option<&'a str> {
+    for template in templates {
+        if let Ok(re) = path_to_regex(template) {
+            if re.is_match(path) {
+                return Some(template);
+            }
+        }
+    }
+    None
+}
+
+pub struct CompiledTemplates {
+    entries: Vec<(String, Regex)>,
+}
+
+impl CompiledTemplates {
+    pub fn new(templates: &[String]) -> std::result::Result<Self, crate::error::Error> {
+        let mut entries = Vec::with_capacity(templates.len());
+        for t in templates {
+            let re = regex::RegexBuilder::new(&path_to_regex_pattern(t)?)
+                .size_limit(1 << 20)
+                .build()
+                .map_err(|e| {
+                    crate::error::Error::Schema(format!("invalid path regex for {t:?}: {e}"))
+                })?;
+            entries.push((t.clone(), re));
+        }
+        Ok(Self { entries })
+    }
+
+    pub fn match_path<'a>(&'a self, path: &str) -> Option<&'a str> {
+        for (template, re) in &self.entries {
+            if re.is_match(path) {
+                return Some(template);
+            }
+        }
+        None
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+fn path_to_regex_pattern(template: &str) -> std::result::Result<String, crate::error::Error> {
     let mut pattern = String::from("^");
     let mut remaining = template;
 
@@ -38,23 +91,7 @@ pub fn path_to_regex(template: &str) -> Result<Regex, crate::error::Error> {
 
     pattern.push_str(&regex::escape(remaining));
     pattern.push('$');
-
-    Regex::new(&pattern)
-        .map_err(|e| crate::error::Error::Schema(format!("invalid path regex: {}", e)))
-}
-
-/// Match a URL path against a list of templates. Returns the first matching template.
-///
-/// First match wins — template order matters.
-pub fn match_path<'a>(path: &str, templates: &'a [String]) -> Option<&'a str> {
-    for template in templates {
-        if let Ok(re) = path_to_regex(template) {
-            if re.is_match(path) {
-                return Some(template);
-            }
-        }
-    }
-    None
+    Ok(pattern)
 }
 
 /// Check if a string looks like a numeric value (all digits, possibly with leading minus).
@@ -373,6 +410,35 @@ mod tests {
     fn param_does_not_match_slash() {
         let re = path_to_regex("/users/{id}").unwrap();
         assert!(!re.is_match("/users/1/2"));
+    }
+
+    #[test]
+    fn compiled_templates_matches_free_function() {
+        let templates = vec![
+            "/api/v1/users/{id}".to_string(),
+            "/api/v1/users/me".to_string(),
+            "/api/v1/posts/{post_id}/comments/{comment_id}".to_string(),
+            "/health".to_string(),
+        ];
+        let compiled = CompiledTemplates::new(&templates).unwrap();
+
+        let test_paths = [
+            "/api/v1/users/123",
+            "/api/v1/users/me",
+            "/api/v1/posts/42/comments/7",
+            "/health",
+            "/nonexistent",
+            "/api/v2/other",
+        ];
+
+        for path in &test_paths {
+            let free_result = match_path(path, &templates);
+            let compiled_result = compiled.match_path(path);
+            assert_eq!(
+                free_result, compiled_result,
+                "mismatch for path {path:?}: free={free_result:?}, compiled={compiled_result:?}"
+            );
+        }
     }
 
     #[test]
