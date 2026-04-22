@@ -7,3 +7,9 @@ edition = "2021"
 [dependencies]
 libfuzzer-sys = "0.4"
 mitm2openapi = { path = ".." }
+
+[[bin]]
+name = "tnetstring"
+path = "fuzz_targets/tnetstring.rs"
+test = false
+doc = false
