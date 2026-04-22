@@ -187,25 +187,23 @@ fn stream_input(
             }
         }
         InputFormat::Har => {
-            debug!(path = %path.display(), "Reading as HAR format");
-            // TODO: HAR streaming is planned for a future release.
-            let requests = har_reader::read_har_file(path).context("failed to read HAR file")?;
-            Ok(Box::new(requests.into_iter().map(Ok)))
+            debug!(path = %path.display(), "Streaming as HAR format");
+            let iter = har_reader::stream_har_file(path).context("failed to stream HAR file")?;
+            Ok(Box::new(iter))
         }
         InputFormat::Auto => {
             if path.is_dir() {
                 debug!(path = %path.display(), "Auto-detecting format for directory");
                 let mitmproxy_result = mitmproxy_reader::stream_mitmproxy_dir(path);
-                let har_result = har_reader::read_har_file(path);
+                let har_result = har_reader::stream_har_file(path);
 
                 match (mitmproxy_result, har_result) {
-                    (Ok(m_iter), Ok(h_vec)) => {
-                        let combined: RequestIter =
-                            Box::new(m_iter.chain(h_vec.into_iter().map(Ok)));
+                    (Ok(m_iter), Ok(h_iter)) => {
+                        let combined: RequestIter = Box::new(m_iter.chain(h_iter));
                         Ok(combined)
                     }
                     (Ok(m_iter), Err(_)) => Ok(m_iter),
-                    (Err(_), Ok(h_vec)) => Ok(Box::new(h_vec.into_iter().map(Ok))),
+                    (Err(_), Ok(h_iter)) => Ok(h_iter),
                     (Err(e1), Err(_e2)) => {
                         Err(e1).context("failed to read directory as mitmproxy or HAR")
                     }
@@ -226,17 +224,17 @@ fn stream_input(
                     Ok(Box::new(iter))
                 } else if hs > ms {
                     info!(path = %path.display(), "Auto-detected as HAR format");
-                    let requests = har_reader::read_har_file(path)
-                        .context("detected as HAR format but failed to parse")?;
-                    Ok(Box::new(requests.into_iter().map(Ok)))
+                    let iter = har_reader::stream_har_file(path)
+                        .context("detected as HAR format but failed to stream")?;
+                    Ok(Box::new(iter))
                 } else if ms > 0 {
                     warn!(path = %path.display(), "Ambiguous format detection, trying mitmproxy first");
                     match mitmproxy_reader::stream_mitmproxy_file(path) {
                         Ok(iter) => Ok(Box::new(iter)),
                         Err(_) => {
-                            let requests = har_reader::read_har_file(path)
+                            let iter = har_reader::stream_har_file(path)
                                 .context("failed to parse as either mitmproxy or HAR")?;
-                            Ok(Box::new(requests.into_iter().map(Ok)))
+                            Ok(Box::new(iter))
                         }
                     }
                 } else {
