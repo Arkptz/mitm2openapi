@@ -256,10 +256,14 @@ Format is auto-detected from file content. Use `--format` to override.
 
 ## Benchmarks
 
-A [GitHub Actions workflow](.github/workflows/bench.yml) runs `hyperfine`
-against the release binary on every push to `main`. Results are uploaded as
-build artifacts for manual inspection. No automated regression gate is enforced
-yet — the artifacts provide a historical record for eyeballing trends.
+Automated CI benchmark runs weekly against the Python original
+([`mitmproxy2swagger`](https://github.com/alufers/mitmproxy2swagger)). See
+[docs/benchmarks.md](docs/benchmarks.md) for the latest timing and memory
+comparison on small (Petstore) and large (~80 MB synthetic) captures, or
+trigger a fresh run via
+[Actions → Benchmark](../../actions/workflows/bench.yml).
+
+Reproduce locally with the commands documented in the workflow file.
 
 ## Contributing
 
