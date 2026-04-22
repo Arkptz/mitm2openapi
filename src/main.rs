@@ -9,6 +9,7 @@ use mitm2openapi::cli::{Cli, Command, InputFormat};
 use mitm2openapi::har_reader;
 use mitm2openapi::mitmproxy_reader;
 use mitm2openapi::output;
+use mitm2openapi::report::ProcessingReport;
 use mitm2openapi::types::{CapturedRequest, Config};
 
 fn main() -> Result<()> {
@@ -19,6 +20,13 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Discover(args) => {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting discovery");
+
+            let mut report = ProcessingReport::new();
+            report.input.path = args.input.display().to_string();
+            report.input.format = format!("{:?}", args.format);
+            if let Ok(meta) = std::fs::metadata(&args.input) {
+                report.input.size_bytes = meta.len();
+            }
 
             let req_iter = stream_input(
                 &args.input,
@@ -48,8 +56,17 @@ fn main() -> Result<()> {
                 templates
             };
 
+            report.result.paths_in_spec = merged.len() as u64;
+
             let yaml = output::templates_to_yaml(&merged)?;
             output::write_yaml(&yaml, &args.output)?;
+
+            if let Some(report_path) = &args.report {
+                report.write_to_path(report_path).with_context(|| {
+                    format!("failed to write report to {}", report_path.display())
+                })?;
+                info!(path = %report_path.display(), "Processing report written");
+            }
 
             info!(
                 count = merged.len(),
@@ -64,6 +81,13 @@ fn main() -> Result<()> {
         }
         Command::Generate(args) => {
             info!(input = %args.input.display(), output = %args.output.display(), "Starting generation");
+
+            let mut report = ProcessingReport::new();
+            report.input.path = args.input.display().to_string();
+            report.input.format = format!("{:?}", args.format);
+            if let Ok(meta) = std::fs::metadata(&args.input) {
+                report.input.size_bytes = meta.len();
+            }
 
             let req_iter = stream_input(
                 &args.input,
@@ -105,12 +129,16 @@ fn main() -> Result<()> {
             let mut builder = OpenApiBuilder::new(&args.prefix, &config, active_templates);
             let mut count = 0usize;
             for req_result in req_iter {
+                report.result.flows_read += 1;
                 match req_result {
                     Ok(req) => {
                         builder.add_request(req.as_ref());
+                        report.result.flows_emitted += 1;
                         count += 1;
                     }
                     Err(e) => {
+                        let error_key = format!("{}", e);
+                        *report.events.parse_error.entry(error_key).or_insert(0) += 1;
                         warn!(error = %e, "Skipping request due to error");
                     }
                 }
@@ -119,8 +147,17 @@ fn main() -> Result<()> {
             let spec = builder.build();
 
             let path_count = spec.paths.paths.len();
+            report.result.paths_in_spec = path_count as u64;
+
             let yaml = output::spec_to_yaml(&spec)?;
             output::write_yaml(&yaml, &args.output)?;
+
+            if let Some(report_path) = &args.report {
+                report.write_to_path(report_path).with_context(|| {
+                    format!("failed to write report to {}", report_path.display())
+                })?;
+                info!(path = %report_path.display(), "Processing report written");
+            }
 
             info!(
                 paths = path_count,
