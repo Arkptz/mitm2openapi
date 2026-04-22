@@ -887,6 +887,57 @@ mod tests {
 
     // ── Proptest ─────────────────────────────────────────────────────
 
+    #[test]
+    fn error_reports_offset_and_count() {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"2:42#"); // valid int
+        data.extend_from_slice(b"2:hi;"); // valid string
+        let corrupt_offset = data.len();
+        data.extend_from_slice(b"3:abcX"); // corrupt: unknown tag 'X'
+        data.extend_from_slice(b"1:1#1:2#1:3#"); // 3 valid entries that must be dropped
+
+        let mut cursor = std::io::Cursor::new(data);
+        let results = parse_all_lenient(&mut cursor);
+
+        let ok_count = results.iter().filter(|r| r.is_ok()).count();
+        let err_count = results.iter().filter(|r| r.is_err()).count();
+        assert_eq!(ok_count, 2, "should return exactly 2 valid entries");
+        assert_eq!(err_count, 1, "should return exactly 1 error");
+
+        let err = results.last().unwrap().as_ref().unwrap_err();
+        match err {
+            Error::TNetParse { offset, message } => {
+                assert!(
+                    *offset >= corrupt_offset,
+                    "error offset {offset} should be at or after corruption start {corrupt_offset}"
+                );
+                assert!(message.contains("unknown type tag"), "got: {message}");
+            }
+            other => panic!("expected TNetParse, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_resync_on_binary_payload() {
+        // Payload contains b"42:" which mimics a valid tnetstring length prefix.
+        // Parser must NOT produce a phantom flow from scanning inside binary data.
+        let payload = b"some data 42: more stuff";
+        let mut data = format!("{}:", payload.len()).into_bytes();
+        data.extend_from_slice(payload);
+        data.push(b',');
+
+        let mut cursor = std::io::Cursor::new(data);
+        let results = parse_all_lenient(&mut cursor);
+
+        assert_eq!(
+            results.len(),
+            1,
+            "should yield exactly 1 flow, not phantom flows from embedded bytes"
+        );
+        assert!(results[0].is_ok());
+        assert_eq!(results[0].as_ref().unwrap().as_bytes().unwrap(), payload);
+    }
+
     mod proptests {
         use super::*;
         use proptest::prelude::*;
