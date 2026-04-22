@@ -10,48 +10,14 @@ use crate::path_matching;
 use crate::schema;
 use crate::types::{CapturedRequest, Config};
 
-/// Match a path against a simple glob: `*` matches any chars except `/`,
-/// `**` matches any chars including `/`. Used by `--exclude-patterns` to
-/// drop static assets (e.g. "/static/**", "*.css") out of discovery.
 pub fn glob_match(pattern: &str, path: &str) -> bool {
-    let p_bytes = pattern.as_bytes();
-    let s_bytes = path.as_bytes();
-    glob_match_impl(p_bytes, 0, s_bytes, 0)
-}
-
-fn glob_match_impl(pat: &[u8], mut pi: usize, s: &[u8], mut si: usize) -> bool {
-    while pi < pat.len() {
-        match pat[pi] {
-            b'*' => {
-                let double = pi + 1 < pat.len() && pat[pi + 1] == b'*';
-                let skip = if double { 2 } else { 1 };
-                if pi + skip >= pat.len() {
-                    return if double {
-                        true
-                    } else {
-                        !s[si..].contains(&b'/')
-                    };
-                }
-                for k in si..=s.len() {
-                    if !double && s[si..k].contains(&b'/') {
-                        break;
-                    }
-                    if glob_match_impl(pat, pi + skip, s, k) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-            c => {
-                if si >= s.len() || s[si] != c {
-                    return false;
-                }
-                pi += 1;
-                si += 1;
-            }
-        }
-    }
-    si == s.len()
+    let Ok(glob) = globset::GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()
+    else {
+        return false;
+    };
+    glob.compile_matcher().is_match(path)
 }
 
 /// Discover unique API paths from captured requests and generate templates.

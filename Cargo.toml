@@ -39,6 +39,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 uuid = { version = "1", features = ["v4"] }
 rmp-serde = "1"
+globset = "0.4"
 
 [dev-dependencies]
 proptest = "1"
