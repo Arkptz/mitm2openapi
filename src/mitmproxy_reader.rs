@@ -6,6 +6,10 @@ use crate::error::{Error, Result};
 use crate::tnetstring;
 use crate::tnetstring::TNetValue;
 use crate::types::CapturedRequest;
+use crate::MAX_BODY_SIZE;
+
+const MAX_HEADER_NAME_SIZE: usize = 8 * 1024;
+const MAX_HEADER_VALUE_SIZE: usize = 64 * 1024;
 
 type RequestIter = Box<dyn Iterator<Item = Result<Box<dyn CapturedRequest>>>>;
 
@@ -60,7 +64,6 @@ impl CapturedRequest for MitmproxyFlowWrapper {
     }
 }
 
-/// Extract a UTF-8 string from a TNetValue that may be Bytes or String.
 fn value_to_string(val: &TNetValue) -> Option<String> {
     match val {
         TNetValue::String(s) => Some(s.clone()),
@@ -69,7 +72,47 @@ fn value_to_string(val: &TNetValue) -> Option<String> {
     }
 }
 
-/// Parse headers from a TNetValue::List of Lists [[Bytes, Bytes], ...].
+fn value_to_string_strict(val: &TNetValue) -> Option<String> {
+    match val {
+        TNetValue::String(s) => Some(s.clone()),
+        TNetValue::Bytes(b) => match std::str::from_utf8(b) {
+            Ok(s) => Some(s.to_string()),
+            Err(_) => {
+                warn!(
+                    event = "utf8_rejected",
+                    "identity field contains invalid UTF-8"
+                );
+                None
+            }
+        },
+        _ => None,
+    }
+}
+
+fn strip_control_chars(s: &str) -> String {
+    s.chars()
+        .filter(|c| {
+            let b = *c as u32;
+            !(b <= 0x1F || b == 0x7F)
+        })
+        .collect()
+}
+
+fn cap_body(body: &[u8], url: &str) -> Vec<u8> {
+    if body.len() > MAX_BODY_SIZE {
+        warn!(
+            event = "body_truncated",
+            original_size = body.len(),
+            truncated_to = MAX_BODY_SIZE,
+            url = %url,
+            "truncating oversized body"
+        );
+        body[..MAX_BODY_SIZE].to_vec()
+    } else {
+        body.to_vec()
+    }
+}
+
 fn parse_headers(val: &TNetValue) -> Vec<(String, String)> {
     let list = match val.as_list() {
         Some(l) => l,
@@ -81,14 +124,29 @@ fn parse_headers(val: &TNetValue) -> Vec<(String, String)> {
             if inner.len() < 2 {
                 return None;
             }
-            let name = value_to_string(&inner[0])?;
+            let name = match value_to_string_strict(&inner[0]) {
+                Some(n) => n,
+                None => {
+                    warn!(event = "header_name_invalid_utf8", "dropping header with non-UTF-8 name");
+                    return None;
+                }
+            };
+            if name.len() > MAX_HEADER_NAME_SIZE {
+                warn!(event = "header_name_too_large", size = name.len(), max = MAX_HEADER_NAME_SIZE, "dropping header with oversized name");
+                return None;
+            }
             let value = value_to_string(&inner[1])?;
+            let value = if value.len() > MAX_HEADER_VALUE_SIZE {
+                warn!(event = "header_value_too_large", size = value.len(), max = MAX_HEADER_VALUE_SIZE, name = %name, "truncating oversized header value");
+                value[..MAX_HEADER_VALUE_SIZE].to_string()
+            } else {
+                value
+            };
             Some((name, value))
         })
         .collect()
 }
 
-/// Find a header value by name (case-insensitive).
 fn find_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
     headers
         .iter()
@@ -98,7 +156,7 @@ fn find_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a st
 
 /// Resolve hostname: host field → Host header → authority field.
 fn resolve_host(request: &TNetValue, headers: &[(String, String)]) -> Option<String> {
-    if let Some(host) = request.get("host").and_then(value_to_string) {
+    if let Some(host) = request.get("host").and_then(value_to_string_strict) {
         if !host.is_empty() {
             return Some(host);
         }
@@ -108,7 +166,7 @@ fn resolve_host(request: &TNetValue, headers: &[(String, String)]) -> Option<Str
             return Some(host.to_string());
         }
     }
-    if let Some(auth) = request.get("authority").and_then(value_to_string) {
+    if let Some(auth) = request.get("authority").and_then(value_to_string_strict) {
         if !auth.is_empty() {
             return Some(auth);
         }
@@ -116,22 +174,69 @@ fn resolve_host(request: &TNetValue, headers: &[(String, String)]) -> Option<Str
     None
 }
 
-/// Build URL with hostname fallback chain.
+fn is_valid_host(host: &str) -> bool {
+    if host.is_empty() {
+        return false;
+    }
+    !host
+        .bytes()
+        .any(|b| b == b'/' || b == b'\\' || b == b'@' || b <= 0x1F || b == 0x7F || b == b' ')
+}
+
 fn build_url_with_fallback(request: &TNetValue, headers: &[(String, String)]) -> Result<String> {
     let scheme = request
         .get("scheme")
-        .and_then(value_to_string)
+        .and_then(value_to_string_strict)
         .unwrap_or_else(|| "https".to_string());
+
+    if scheme != "http" && scheme != "https" {
+        warn!(event = "scheme_rejected", scheme = %scheme, "skipping flow with non-http scheme");
+        return Err(Error::FlowState(format!("unsupported scheme: {scheme}")));
+    }
 
     let host = resolve_host(request, headers)
         .ok_or_else(|| Error::FlowState("request missing host in all sources".into()))?;
 
-    let port = request.get("port").and_then(|v| v.as_int()).unwrap_or(0) as u16;
+    if !is_valid_host(&host) {
+        warn!(event = "host_rejected", host = %host, "skipping flow with invalid host");
+        return Err(Error::FlowState(format!("invalid host: {host}")));
+    }
 
-    let path = request
+    let raw_port = request.get("port").and_then(|v| v.as_int()).unwrap_or(0);
+    let port = match u16::try_from(raw_port).ok().filter(|p| *p > 0) {
+        Some(p) => p,
+        None => {
+            if raw_port != 0 {
+                warn!(
+                    event = "port_out_of_range",
+                    value = raw_port,
+                    "dropping request with invalid port"
+                );
+                return Err(Error::FlowState(format!(
+                    "port out of valid range: {raw_port}"
+                )));
+            }
+            // port field absent or 0 — treat as default
+            0u16
+        }
+    };
+
+    let raw_path = request
         .get("path")
-        .and_then(value_to_string)
+        .and_then(value_to_string_strict)
         .unwrap_or_else(|| "/".to_string());
+    let path = {
+        let cleaned = strip_control_chars(&raw_path);
+        if cleaned.len() != raw_path.len() {
+            warn!(
+                event = "path_cleaned",
+                original_len = raw_path.len(),
+                cleaned_len = cleaned.len(),
+                "stripped control characters from path"
+            );
+        }
+        cleaned
+    };
 
     let is_default_port = (scheme == "https" && port == 443) || (scheme == "http" && port == 80);
 
@@ -155,8 +260,8 @@ fn parse_flow(flow: &TNetValue) -> Result<MitmproxyFlowWrapper> {
 
     let method = request
         .get("method")
-        .and_then(value_to_string)
-        .ok_or_else(|| Error::FlowState("request missing 'method'".into()))?;
+        .and_then(value_to_string_strict)
+        .ok_or_else(|| Error::FlowState("request missing 'method' or invalid UTF-8".into()))?;
 
     let request_headers = request
         .get("headers")
@@ -169,7 +274,7 @@ fn parse_flow(flow: &TNetValue) -> Result<MitmproxyFlowWrapper> {
         .get("content")
         .and_then(|v| if v.is_null() { None } else { v.as_bytes() })
         .filter(|b| !b.is_empty())
-        .map(|b| b.to_vec());
+        .map(|b| cap_body(b, &url));
 
     let response = flow.get("response");
     let has_response = response.is_some_and(|r| !r.is_null());
@@ -180,26 +285,37 @@ fn parse_flow(flow: &TNetValue) -> Result<MitmproxyFlowWrapper> {
         response_headers,
         response_body,
         response_content_type,
-    ) = if has_response {
-        let resp = response.unwrap();
-        let status = resp
-            .get("status_code")
-            .and_then(|v| v.as_int())
-            .map(|n| n as u16);
-        let reason = resp.get("reason").and_then(value_to_string);
-        let headers = resp.get("headers").map(parse_headers);
-        let body = resp
-            .get("content")
-            .and_then(|v| if v.is_null() { None } else { v.as_bytes() })
-            .filter(|b| !b.is_empty())
-            .map(|b| b.to_vec());
-        let content_type = headers
-            .as_ref()
-            .and_then(|h| find_header(h, "content-type").map(|v| v.to_string()));
-        (status, reason, headers, body, content_type)
-    } else {
-        (None, None, None, None, None)
-    };
+    ) =
+        if has_response {
+            let resp = response.unwrap();
+            let status =
+                resp.get("status_code").and_then(|v| v.as_int()).and_then(
+                    |n| match u16::try_from(n).ok().filter(|s| (100..=599).contains(s)) {
+                        Some(s) => Some(s),
+                        None => {
+                            warn!(
+                                event = "status_out_of_range",
+                                value = n,
+                                "dropping response with invalid status code"
+                            );
+                            None
+                        }
+                    },
+                );
+            let reason = resp.get("reason").and_then(value_to_string);
+            let headers = resp.get("headers").map(parse_headers);
+            let body = resp
+                .get("content")
+                .and_then(|v| if v.is_null() { None } else { v.as_bytes() })
+                .filter(|b| !b.is_empty())
+                .map(|b| cap_body(b, &url));
+            let content_type = headers
+                .as_ref()
+                .and_then(|h| find_header(h, "content-type").map(|v| v.to_string()));
+            (status, reason, headers, body, content_type)
+        } else {
+            (None, None, None, None, None)
+        };
 
     Ok(MitmproxyFlowWrapper {
         url,
@@ -505,5 +621,311 @@ mod tests {
             .join("flows");
         let result = read_mitmproxy_dir(&dir);
         assert!(result.is_err() || !result.unwrap().is_empty());
+    }
+
+    fn make_flow(
+        method: &str,
+        scheme: &str,
+        host: &str,
+        port: i64,
+        path: &str,
+        status: Option<i64>,
+    ) -> TNetValue {
+        let mut req_fields: Vec<(TNetValue, TNetValue)> = vec![
+            (
+                TNetValue::String("method".into()),
+                TNetValue::String(method.into()),
+            ),
+            (
+                TNetValue::String("scheme".into()),
+                TNetValue::String(scheme.into()),
+            ),
+            (
+                TNetValue::String("host".into()),
+                TNetValue::String(host.into()),
+            ),
+            (TNetValue::String("port".into()), TNetValue::Int(port)),
+            (
+                TNetValue::String("path".into()),
+                TNetValue::String(path.into()),
+            ),
+        ];
+        let _ = &mut req_fields;
+
+        let mut flow_fields = vec![
+            (
+                TNetValue::String("type".into()),
+                TNetValue::String("http".into()),
+            ),
+            (
+                TNetValue::String("request".into()),
+                TNetValue::Dict(req_fields),
+            ),
+        ];
+
+        if let Some(code) = status {
+            let resp = TNetValue::Dict(vec![(
+                TNetValue::String("status_code".into()),
+                TNetValue::Int(code),
+            )]);
+            flow_fields.push((TNetValue::String("response".into()), resp));
+        }
+
+        TNetValue::Dict(flow_fields)
+    }
+
+    #[test]
+    fn port_out_of_range() {
+        let flow = make_flow("GET", "https", "api.example.com", 65616, "/test", Some(200));
+        let result = parse_flow(&flow);
+        assert!(result.is_err(), "port 65616 should be rejected");
+    }
+
+    #[test]
+    fn port_zero_rejected() {
+        let flow = make_flow("GET", "https", "api.example.com", 0, "/test", Some(200));
+        let wrapper = parse_flow(&flow).unwrap();
+        assert!(
+            !wrapper.url.contains(":0"),
+            "port 0 should not appear in URL"
+        );
+    }
+
+    #[test]
+    fn status_out_of_range() {
+        let flow = make_flow("GET", "https", "api.example.com", 443, "/test", Some(70152));
+        let wrapper = parse_flow(&flow).unwrap();
+        assert_eq!(
+            wrapper.response_status_code, None,
+            "status 70152 should be rejected"
+        );
+    }
+
+    #[test]
+    fn valid_port_and_status() {
+        let flow = make_flow("GET", "https", "api.example.com", 8080, "/test", Some(200));
+        let wrapper = parse_flow(&flow).unwrap();
+        assert!(wrapper.url.contains(":8080"));
+        assert_eq!(wrapper.response_status_code, Some(200));
+    }
+
+    #[test]
+    fn scheme_whitelist() {
+        let flow = make_flow("GET", "javascript", "evil.com", 443, "/test", Some(200));
+        let result = parse_flow(&flow);
+        assert!(result.is_err(), "javascript scheme should be rejected");
+    }
+
+    #[test]
+    fn scheme_data_rejected() {
+        let flow = make_flow("GET", "data", "x", 443, "/test", Some(200));
+        assert!(parse_flow(&flow).is_err());
+    }
+
+    #[test]
+    fn host_with_slash_rejected() {
+        let flow = make_flow("GET", "https", "evil.com/path", 443, "/test", Some(200));
+        assert!(parse_flow(&flow).is_err());
+    }
+
+    #[test]
+    fn host_with_at_rejected() {
+        let flow = make_flow("GET", "https", "user@host", 443, "/test", Some(200));
+        assert!(parse_flow(&flow).is_err());
+    }
+
+    #[test]
+    fn host_empty_rejected() {
+        let flow = make_flow("GET", "https", "", 443, "/test", Some(200));
+        assert!(parse_flow(&flow).is_err());
+    }
+
+    #[test]
+    fn host_with_control_char_rejected() {
+        let flow = make_flow("GET", "https", "evil\x00.com", 443, "/test", Some(200));
+        assert!(parse_flow(&flow).is_err());
+    }
+
+    #[test]
+    fn strict_utf8_no_collision() {
+        let flow1 = {
+            let mut req = vec![
+                (
+                    TNetValue::String("method".into()),
+                    TNetValue::String("GET".into()),
+                ),
+                (
+                    TNetValue::String("scheme".into()),
+                    TNetValue::String("https".into()),
+                ),
+                (
+                    TNetValue::String("host".into()),
+                    TNetValue::Bytes(vec![0xFF, 0xFE]),
+                ),
+                (TNetValue::String("port".into()), TNetValue::Int(443)),
+                (
+                    TNetValue::String("path".into()),
+                    TNetValue::String("/test".into()),
+                ),
+            ];
+            let _ = &mut req;
+            TNetValue::Dict(vec![
+                (
+                    TNetValue::String("type".into()),
+                    TNetValue::String("http".into()),
+                ),
+                (TNetValue::String("request".into()), TNetValue::Dict(req)),
+            ])
+        };
+        let flow2 = {
+            let req = vec![
+                (
+                    TNetValue::String("method".into()),
+                    TNetValue::String("GET".into()),
+                ),
+                (
+                    TNetValue::String("scheme".into()),
+                    TNetValue::String("https".into()),
+                ),
+                (
+                    TNetValue::String("host".into()),
+                    TNetValue::Bytes(vec![0xFE, 0xFF]),
+                ),
+                (TNetValue::String("port".into()), TNetValue::Int(443)),
+                (
+                    TNetValue::String("path".into()),
+                    TNetValue::String("/test".into()),
+                ),
+            ];
+            TNetValue::Dict(vec![
+                (
+                    TNetValue::String("type".into()),
+                    TNetValue::String("http".into()),
+                ),
+                (TNetValue::String("request".into()), TNetValue::Dict(req)),
+            ])
+        };
+        assert!(
+            parse_flow(&flow1).is_err(),
+            "invalid UTF-8 host should be rejected"
+        );
+        assert!(
+            parse_flow(&flow2).is_err(),
+            "invalid UTF-8 host should be rejected"
+        );
+    }
+
+    #[test]
+    fn header_name_cap() {
+        let big_name = "X-".to_string() + &"A".repeat(MAX_HEADER_NAME_SIZE + 100);
+        let headers = TNetValue::List(vec![TNetValue::List(vec![
+            TNetValue::String(big_name),
+            TNetValue::String("value".into()),
+        ])]);
+        let result = parse_headers(&headers);
+        assert!(
+            result.is_empty(),
+            "header with oversized name should be dropped"
+        );
+    }
+
+    #[test]
+    fn header_value_cap() {
+        let big_value = "V".repeat(MAX_HEADER_VALUE_SIZE + 100);
+        let headers = TNetValue::List(vec![TNetValue::List(vec![
+            TNetValue::String("X-Test".into()),
+            TNetValue::String(big_value),
+        ])]);
+        let result = parse_headers(&headers);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].1.len(),
+            MAX_HEADER_VALUE_SIZE,
+            "header value should be truncated"
+        );
+    }
+
+    #[test]
+    fn body_cap_truncates() {
+        let mut req_fields = vec![
+            (
+                TNetValue::String("method".into()),
+                TNetValue::String("GET".into()),
+            ),
+            (
+                TNetValue::String("scheme".into()),
+                TNetValue::String("https".into()),
+            ),
+            (
+                TNetValue::String("host".into()),
+                TNetValue::String("api.example.com".into()),
+            ),
+            (TNetValue::String("port".into()), TNetValue::Int(443)),
+            (
+                TNetValue::String("path".into()),
+                TNetValue::String("/test".into()),
+            ),
+        ];
+        let large_body = vec![0x41u8; MAX_BODY_SIZE + 1024];
+        req_fields.push((
+            TNetValue::String("content".into()),
+            TNetValue::Bytes(large_body),
+        ));
+
+        let resp = TNetValue::Dict(vec![
+            (TNetValue::String("status_code".into()), TNetValue::Int(200)),
+            (
+                TNetValue::String("content".into()),
+                TNetValue::Bytes(vec![0x42u8; MAX_BODY_SIZE + 512]),
+            ),
+        ]);
+
+        let flow = TNetValue::Dict(vec![
+            (
+                TNetValue::String("type".into()),
+                TNetValue::String("http".into()),
+            ),
+            (
+                TNetValue::String("request".into()),
+                TNetValue::Dict(req_fields),
+            ),
+            (TNetValue::String("response".into()), resp),
+        ]);
+
+        let wrapper = parse_flow(&flow).unwrap();
+        let req_body = wrapper.request_body.as_ref().unwrap();
+        assert_eq!(
+            req_body.len(),
+            MAX_BODY_SIZE,
+            "request body should be truncated to MAX_BODY_SIZE"
+        );
+        let resp_body = wrapper.response_body.as_ref().unwrap();
+        assert_eq!(
+            resp_body.len(),
+            MAX_BODY_SIZE,
+            "response body should be truncated to MAX_BODY_SIZE"
+        );
+    }
+
+    #[test]
+    fn path_control_chars_stripped() {
+        let flow = make_flow(
+            "GET",
+            "https",
+            "api.example.com",
+            443,
+            "/api\x00/users\r\n",
+            Some(200),
+        );
+        let wrapper = parse_flow(&flow).unwrap();
+        assert!(
+            wrapper.url.contains("/api/users"),
+            "control chars should be stripped from path, got: {}",
+            wrapper.url
+        );
+        assert!(
+            !wrapper.url.contains('\x00'),
+            "null byte should not be in URL"
+        );
     }
 }
