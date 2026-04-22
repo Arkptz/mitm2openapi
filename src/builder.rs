@@ -340,9 +340,16 @@ fn collect_one_of_variants(
 fn dedup_schema_variants(variants: &mut Vec<ReferenceOr<openapiv3::Schema>>) {
     let mut i = 0;
     while i < variants.len() {
+        let Some(anchor) = variants.get(i).cloned() else {
+            break;
+        };
         let mut j = i + 1;
         while j < variants.len() {
-            if schema_refs_equal(&variants[i], &variants[j]) {
+            let same = variants
+                .get(j)
+                .map(|candidate| schema_refs_equal(&anchor, candidate))
+                .unwrap_or(false);
+            if same {
                 variants.remove(j);
             } else {
                 j += 1;
