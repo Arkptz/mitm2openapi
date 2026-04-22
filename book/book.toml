@@ -1,0 +1,48 @@
+[book]
+title = "mitm2openapi"
+authors = ["Arkptz"]
+description = "Convert mitmproxy flow dumps and HAR files to OpenAPI 3.0 specs"
+src = "src"
+language = "en"
+
+[build]
+build-dir = "../target/book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/Arkptz/mitm2openapi"
+edit-url-template = "https://github.com/Arkptz/mitm2openapi/edit/main/book/{path}"
+default-theme = "ayu"
+preferred-dark-theme = "ayu"
+site-url = "/mitm2openapi/"
+additional-css = ["./mdbook-admonish.css"]
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 20
+teaser-word-count = 30
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand = true
+heading-split-level = 3
+
+[output.linkcheck]
+warning-policy = "warn"
+follow-web-links = false
+
+[preprocessor.toc]
+command = "mdbook-toc"
+renderer = ["html"]
+
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.0.2" # do not edit: managed by `mdbook-admonish install`
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
