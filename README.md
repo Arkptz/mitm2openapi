@@ -150,6 +150,23 @@ enforces several configurable limits:
 | `--max-body-size` | 64 MiB | Maximum request/response body considered during schema inference |
 | `--allow-symlinks` | off | By default, symlinked inputs are rejected to prevent path-traversal on shared CI runners |
 
+In addition to the configurable limits above, the following per-field caps are
+applied unconditionally to prevent data corruption:
+
+| Field | Cap | Behaviour |
+|-------|-----|-----------|
+| Header name | 8 KiB | Dropped (other headers still processed) |
+| Header value | 64 KiB | Truncated to cap |
+| Form fields per request | 1 000 | Excess fields ignored |
+| URL scheme | `http` / `https` only | Non-HTTP flows silently skipped |
+| Port number | 1–65 535 | Out-of-range port drops the request |
+| HTTP status code | 100–599 | Invalid codes treated as no response |
+
+Identity fields (scheme, host, path, method, header names) require valid UTF-8.
+Flows with non-UTF-8 identity bytes are skipped to prevent data aliasing through
+replacement-character collisions. Control characters in paths are stripped
+automatically.
+
 Increase `--max-input-size` if you work with captures larger than 2 GiB (e.g.
 `--max-input-size 8GiB`). The other limits rarely need tuning.
 
