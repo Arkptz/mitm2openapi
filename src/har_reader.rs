@@ -1,33 +1,61 @@
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
+use base64::Engine;
+use serde::Deserialize;
 use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
 use crate::types::CapturedRequest;
-use base64::Engine;
 
-fn strip_bom(input: &[u8]) -> &[u8] {
-    if input.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        &input[3..]
-    } else {
-        input
-    }
+#[derive(Deserialize)]
+struct StreamingHarEntry {
+    request: StreamingHarRequest,
+    response: StreamingHarResponse,
 }
 
-fn convert_headers(headers: &[har::v1_2::Headers]) -> Vec<(String, String)> {
-    headers
-        .iter()
-        .map(|h| (h.name.clone(), h.value.clone()))
-        .collect()
+#[derive(Deserialize)]
+struct StreamingHarRequest {
+    method: String,
+    url: String,
+    #[serde(default)]
+    headers: Vec<StreamingHarHeader>,
+    #[serde(rename = "postData", default)]
+    post_data: Option<StreamingHarPostData>,
 }
 
-fn decode_body(content: &har::v1_2::Content) -> Option<Vec<u8>> {
-    let text = content.text.as_deref()?;
-    if content.encoding.as_deref() == Some("base64") {
-        base64::engine::general_purpose::STANDARD.decode(text).ok()
-    } else {
-        Some(text.as_bytes().to_vec())
-    }
+#[derive(Deserialize)]
+struct StreamingHarResponse {
+    status: i64,
+    #[serde(rename = "statusText", default)]
+    status_text: String,
+    #[serde(default)]
+    headers: Vec<StreamingHarHeader>,
+    #[serde(default)]
+    content: StreamingHarContent,
+}
+
+#[derive(Deserialize)]
+struct StreamingHarHeader {
+    name: String,
+    value: String,
+}
+
+#[derive(Deserialize, Default)]
+struct StreamingHarPostData {
+    #[serde(default)]
+    text: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct StreamingHarContent {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(rename = "mimeType", default)]
+    mime_type: Option<String>,
+    #[serde(default)]
+    encoding: Option<String>,
 }
 
 pub struct HarFlowWrapper {
@@ -43,29 +71,46 @@ pub struct HarFlowWrapper {
 }
 
 impl HarFlowWrapper {
-    fn from_entry(entry: &har::v1_2::Entries) -> Self {
-        let req = &entry.request;
-        let resp = &entry.response;
-
-        let request_body = req
+    fn from_streaming_entry(entry: StreamingHarEntry) -> Self {
+        let request_body = entry
+            .request
             .post_data
-            .as_ref()
-            .and_then(|pd| pd.text.as_deref())
-            .map(|t| t.as_bytes().to_vec());
+            .and_then(|pd| pd.text)
+            .map(String::into_bytes);
 
-        let response_content_type = resp.content.mime_type.clone();
+        let response_content_type = entry.response.content.mime_type.clone();
+        let response_body = decode_streaming_body(&entry.response.content);
 
         Self {
-            url: req.url.clone(),
-            method: req.method.clone(),
-            request_headers: convert_headers(&req.headers),
+            url: entry.request.url,
+            method: entry.request.method,
+            request_headers: entry
+                .request
+                .headers
+                .into_iter()
+                .map(|h| (h.name, h.value))
+                .collect(),
             request_body,
-            response_status: resp.status as u16,
-            response_reason: resp.status_text.clone(),
-            response_headers: convert_headers(&resp.headers),
-            response_body: decode_body(&resp.content),
+            response_status: entry.response.status as u16,
+            response_reason: entry.response.status_text,
+            response_headers: entry
+                .response
+                .headers
+                .into_iter()
+                .map(|h| (h.name, h.value))
+                .collect(),
+            response_body,
             response_content_type,
         }
+    }
+}
+
+fn decode_streaming_body(content: &StreamingHarContent) -> Option<Vec<u8>> {
+    let text = content.text.as_deref()?;
+    if content.encoding.as_deref() == Some("base64") {
+        base64::engine::general_purpose::STANDARD.decode(text).ok()
+    } else {
+        Some(text.as_bytes().to_vec())
     }
 }
 
@@ -107,59 +152,264 @@ impl CapturedRequest for HarFlowWrapper {
     }
 }
 
-fn parse_har_bytes(bytes: &[u8]) -> Result<Vec<Box<dyn CapturedRequest>>> {
-    let clean = strip_bom(bytes);
-    let har_doc = har::from_slice(clean).map_err(|e| Error::HarParse(e.to_string()))?;
+fn read_byte(reader: &mut impl Read) -> Result<Option<u8>> {
+    let mut buf = [0u8; 1];
+    match reader.read(&mut buf)? {
+        0 => Ok(None),
+        _ => Ok(Some(buf[0])),
+    }
+}
 
-    let entries = match &har_doc.log {
-        har::Spec::V1_2(log) => &log.entries,
-        har::Spec::V1_3(_) => {
-            return Err(Error::HarParse("HAR v1.3 not yet supported".into()));
+fn skip_ws_byte(reader: &mut impl Read) -> Result<Option<u8>> {
+    loop {
+        match read_byte(reader)? {
+            None => return Ok(None),
+            Some(b) if b.is_ascii_whitespace() => continue,
+            Some(b) => return Ok(Some(b)),
         }
-    };
+    }
+}
 
-    let requests: Vec<Box<dyn CapturedRequest>> = entries
-        .iter()
-        .map(|e| Box::new(HarFlowWrapper::from_entry(e)) as Box<dyn CapturedRequest>)
+fn strip_bom_from_reader(reader: &mut BufReader<File>) -> Result<()> {
+    let buf = reader.fill_buf()?;
+    if buf.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        reader.consume(3);
+    }
+    Ok(())
+}
+
+/// Scan forward through JSON until positioned just past `"entries": [`.
+/// Tracks string boundaries so `"entries"` inside a value is not mistaken for the key.
+fn find_entries_array_start(reader: &mut impl Read) -> Result<()> {
+    let target = b"\"entries\"";
+    let mut in_string = false;
+    let mut escape_next = false;
+    let mut match_pos: usize = 0;
+
+    loop {
+        let byte = read_byte(reader)?
+            .ok_or_else(|| Error::HarParse("unexpected EOF: entries array not found".into()))?;
+
+        if escape_next {
+            escape_next = false;
+            match_pos = 0;
+            continue;
+        }
+
+        if byte == b'\\' && in_string {
+            escape_next = true;
+            match_pos = 0;
+            continue;
+        }
+
+        if byte == b'"' {
+            in_string = !in_string;
+        }
+
+        if byte == target[match_pos] {
+            match_pos += 1;
+            if match_pos == target.len() {
+                let colon = skip_ws_byte(reader)?
+                    .ok_or_else(|| Error::HarParse("unexpected EOF after entries key".into()))?;
+                if colon == b':' {
+                    let bracket = skip_ws_byte(reader)?.ok_or_else(|| {
+                        Error::HarParse("unexpected EOF expecting entries array".into())
+                    })?;
+                    if bracket == b'[' {
+                        return Ok(());
+                    }
+                }
+                match_pos = 0;
+            }
+        } else if byte == target[0] {
+            match_pos = 1;
+        } else {
+            match_pos = 0;
+        }
+    }
+}
+
+/// Read a balanced JSON object after the opening `{` has been consumed.
+/// Tracks nesting depth across braces/brackets and handles string escapes.
+fn read_json_object(reader: &mut impl Read) -> Result<Vec<u8>> {
+    let mut buf = Vec::with_capacity(4096);
+    buf.push(b'{');
+    let mut depth: i32 = 1;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    loop {
+        let byte = read_byte(reader)?
+            .ok_or_else(|| Error::HarParse("unexpected EOF inside entry object".into()))?;
+        buf.push(byte);
+
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+
+        if in_string {
+            match byte {
+                b'\\' => escape_next = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(buf);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+pub struct HarStreamIter {
+    reader: BufReader<File>,
+    done: bool,
+    entry_index: usize,
+}
+
+impl HarStreamIter {
+    fn new(path: &Path) -> Result<Self> {
+        let file = File::open(path)?;
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
+
+        strip_bom_from_reader(&mut reader)?;
+        find_entries_array_start(&mut reader)?;
+
+        Ok(Self {
+            reader,
+            done: false,
+            entry_index: 0,
+        })
+    }
+}
+
+impl Iterator for HarStreamIter {
+    type Item = Result<Box<dyn CapturedRequest>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
+        let byte = match skip_ws_byte(&mut self.reader) {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                self.done = true;
+                return None;
+            }
+            Err(e) => {
+                self.done = true;
+                return Some(Err(e));
+            }
+        };
+
+        if byte == b']' {
+            self.done = true;
+            return None;
+        }
+
+        let byte = if byte == b',' {
+            match skip_ws_byte(&mut self.reader) {
+                Ok(Some(b)) => b,
+                Ok(None) => {
+                    self.done = true;
+                    return None;
+                }
+                Err(e) => {
+                    self.done = true;
+                    return Some(Err(e));
+                }
+            }
+        } else {
+            byte
+        };
+
+        if byte == b']' {
+            self.done = true;
+            return None;
+        }
+
+        if byte != b'{' {
+            self.done = true;
+            return Some(Err(Error::HarParse(format!(
+                "expected '{{' at start of entry {}, got '{}'",
+                self.entry_index, byte as char
+            ))));
+        }
+
+        match read_json_object(&mut self.reader) {
+            Ok(buf) => {
+                let idx = self.entry_index;
+                self.entry_index += 1;
+                match serde_json::from_slice::<StreamingHarEntry>(&buf) {
+                    Ok(entry) => {
+                        let wrapper = HarFlowWrapper::from_streaming_entry(entry);
+                        Some(Ok(Box::new(wrapper) as Box<dyn CapturedRequest>))
+                    }
+                    Err(e) => {
+                        warn!(entry = idx, error = %e, "Failed to parse HAR entry");
+                        Some(Err(Error::HarParse(format!("entry {idx}: {e}"))))
+                    }
+                }
+            }
+            Err(e) => {
+                self.done = true;
+                Some(Err(e))
+            }
+        }
+    }
+}
+
+type RequestIter = Box<dyn Iterator<Item = Result<Box<dyn CapturedRequest>>>>;
+
+pub fn stream_har_file(path: &Path) -> Result<RequestIter> {
+    if path.is_dir() {
+        return stream_har_dir(path);
+    }
+    debug!(path = %path.display(), "Streaming HAR file");
+    let iter = HarStreamIter::new(path)?;
+    Ok(Box::new(iter))
+}
+
+fn stream_har_dir(path: &Path) -> Result<RequestIter> {
+    let mut dir_entries: Vec<_> = std::fs::read_dir(path)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("har"))
+        })
         .collect();
+    dir_entries.sort_by_key(|e| e.path());
 
-    Ok(requests)
+    let iter = dir_entries
+        .into_iter()
+        .flat_map(|entry| match HarStreamIter::new(&entry.path()) {
+            Ok(it) => {
+                debug!(path = %entry.path().display(), "Streaming HAR file from directory");
+                Box::new(it) as Box<dyn Iterator<Item = Result<Box<dyn CapturedRequest>>>>
+            }
+            Err(e) => {
+                warn!(path = %entry.path().display(), error = %e, "Skipping unparseable HAR file");
+                Box::new(std::iter::empty())
+            }
+        });
+
+    Ok(Box::new(iter))
 }
 
 pub fn read_har_file(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
-    if path.is_dir() {
-        let mut all = Vec::new();
-        let mut entries: Vec<_> = std::fs::read_dir(path)?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("har"))
-            })
-            .collect();
-        entries.sort_by_key(|e| e.path());
-        for entry in entries {
-            match std::fs::read(entry.path()) {
-                Ok(bytes) => match parse_har_bytes(&bytes) {
-                    Ok(requests) => {
-                        debug!(path = %entry.path().display(), count = requests.len(), "Parsed HAR file");
-                        all.extend(requests);
-                    }
-                    Err(e) => {
-                        warn!(path = %entry.path().display(), error = %e, "Skipping unparseable HAR file");
-                    }
-                },
-                Err(e) => {
-                    warn!(path = %entry.path().display(), error = %e, "Skipping unreadable HAR file");
-                }
-            }
-        }
-        Ok(all)
-    } else {
-        let bytes = std::fs::read(path)?;
-        debug!(path = %path.display(), "Parsing HAR file");
-        parse_har_bytes(&bytes)
-    }
+    stream_har_file(path)?.collect()
 }
 
 pub fn har_heuristic(path: &Path) -> bool {
@@ -169,14 +419,18 @@ pub fn har_heuristic(path: &Path) -> bool {
     let Ok(file) = std::fs::File::open(path) else {
         return false;
     };
-    use std::io::Read;
+    use std::io::Read as _;
     let mut buf = [0u8; 4096];
     let mut reader = std::io::BufReader::new(file);
     let n = match reader.read(&mut buf) {
         Ok(n) => n,
         Err(_) => return false,
     };
-    let clean = strip_bom(&buf[..n]);
+    let clean = if buf[..n].starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &buf[3..n]
+    } else {
+        &buf[..n]
+    };
     clean
         .iter()
         .find(|b| !b.is_ascii_whitespace())
@@ -304,7 +558,10 @@ mod tests {
         let mut with_bom = vec![0xEF, 0xBB, 0xBF];
         with_bom.extend_from_slice(&original);
 
-        let requests = parse_har_bytes(&with_bom).unwrap();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), &with_bom).unwrap();
+
+        let requests = read_har_file(tmp.path()).unwrap();
         assert_eq!(requests.len(), 1);
         assert_eq!(
             requests[0].get_url(),
