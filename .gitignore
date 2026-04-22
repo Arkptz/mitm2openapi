@@ -27,6 +27,9 @@ result-*
 # Ruff cache (leftover from Python tooling)
 .ruff_cache/
 
+# mdBook build output
+/target/book/
+
 # integration test artifacts
 tests/integration/level1/fixtures/*.flow
 tests/integration/level1/out/

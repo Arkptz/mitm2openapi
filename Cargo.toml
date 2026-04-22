@@ -17,6 +17,7 @@ exclude = [
   "docs/demo.mp4", ".github/**", "scripts/**",
   "flake.nix", "flake.lock", ".envrc", ".direnv/**",
   ".sisyphus/**", ".ruff_cache/**",
+  "book/**", "docs/**",
 ]
 
 [[bin]]
