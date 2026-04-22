@@ -568,4 +568,124 @@ mod tests {
             "https://api.example.com/api/v1/users"
         );
     }
+
+    #[test]
+    fn stream_har_does_not_materialize_all() {
+        use std::io::Write;
+
+        let mut har = String::from(
+            r#"{"log":{"version":"1.2","creator":{"name":"test","version":"1.0"},"entries":["#,
+        );
+        let entry_count = 20;
+        for i in 0..entry_count {
+            if i > 0 {
+                har.push(',');
+            }
+            har.push_str(&format!(
+                r#"{{"request":{{"method":"GET","url":"https://example.com/api/item/{i}","headers":[]}},"response":{{"status":200,"statusText":"OK","headers":[],"content":{{"text":"{{\"id\":{i}}}"}}}}}}
+"#,
+            ));
+        }
+        har.push_str("]}}\n");
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.as_file().write_all(har.as_bytes()).unwrap();
+        tmp.as_file().sync_all().unwrap();
+
+        let mut iter = stream_har_file(tmp.path()).unwrap();
+
+        let first = iter.next().unwrap().unwrap();
+        assert_eq!(first.get_url(), "https://example.com/api/item/0");
+        assert_eq!(first.get_method(), "GET");
+
+        let rest: Vec<_> = iter.collect::<Result<Vec<_>>>().unwrap();
+        assert_eq!(rest.len(), entry_count - 1);
+    }
+
+    #[test]
+    fn stream_matches_read_for_fixtures() {
+        for name in &["simple.har", "multi.har", "base64_body.har"] {
+            let path = fixture(name);
+            let collected: Vec<_> = stream_har_file(&path)
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+
+            let direct = read_har_file(&path).unwrap();
+
+            assert_eq!(
+                collected.len(),
+                direct.len(),
+                "entry count mismatch for {name}"
+            );
+            for (i, (a, b)) in collected.iter().zip(direct.iter()).enumerate() {
+                assert_eq!(a.get_url(), b.get_url(), "{name} entry {i} url");
+                assert_eq!(a.get_method(), b.get_method(), "{name} entry {i} method");
+                assert_eq!(
+                    a.get_response_status_code(),
+                    b.get_response_status_code(),
+                    "{name} entry {i} status"
+                );
+                assert_eq!(
+                    a.get_response_body(),
+                    b.get_response_body(),
+                    "{name} entry {i} body"
+                );
+                assert_eq!(
+                    a.get_request_body(),
+                    b.get_request_body(),
+                    "{name} entry {i} req body"
+                );
+                assert_eq!(
+                    a.get_response_content_type(),
+                    b.get_response_content_type(),
+                    "{name} entry {i} content-type"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn stream_malformed_entry_returns_error() {
+        use std::io::Write;
+
+        let har = r#"{"log":{"version":"1.2","entries":[
+            {"request":{"method":"GET","url":"https://ok.example.com","headers":[]},"response":{"status":200,"statusText":"OK","headers":[],"content":{}}},
+            {"INVALID JSON STRUCTURE": true},
+            {"request":{"method":"POST","url":"https://also-ok.example.com","headers":[]},"response":{"status":201,"statusText":"Created","headers":[],"content":{}}}
+        ]}}"#;
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.as_file().write_all(har.as_bytes()).unwrap();
+        tmp.as_file().sync_all().unwrap();
+
+        let results: Vec<_> = stream_har_file(tmp.path()).unwrap().collect();
+
+        assert!(results[0].is_ok());
+        assert_eq!(
+            results[0].as_ref().unwrap().get_url(),
+            "https://ok.example.com"
+        );
+
+        assert!(results[1].is_err());
+
+        assert!(results[2].is_ok());
+        assert_eq!(
+            results[2].as_ref().unwrap().get_url(),
+            "https://also-ok.example.com"
+        );
+    }
+
+    #[test]
+    fn stream_empty_entries_array() {
+        use std::io::Write;
+
+        let har = r#"{"log":{"version":"1.2","entries":[]}}"#;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.as_file().write_all(har.as_bytes()).unwrap();
+        tmp.as_file().sync_all().unwrap();
+
+        let results: Vec<_> = stream_har_file(tmp.path()).unwrap().collect();
+        assert!(results.is_empty());
+    }
 }
