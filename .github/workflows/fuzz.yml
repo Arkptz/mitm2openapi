@@ -1,0 +1,23 @@
+# NOTE: gated with `if: false` until P4.1 ships actual fuzz targets. Flip the flag then.
+name: Fuzz
+
+on:
+  schedule:
+    - cron: "0 3 * * 0" # weekly, Sunday 03:00 UTC
+  workflow_dispatch:
+
+jobs:
+  fuzz-tnetstring:
+    name: Fuzz tnetstring parser
+    runs-on: ubuntu-latest
+    if: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Run fuzzer
+        run: cargo fuzz run tnetstring -- -max_total_time=600
+        working-directory: fuzz
