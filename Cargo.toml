@@ -1,6 +1,6 @@
 [package]
 name = "mitm2openapi"
-version = "0.2.6"
+version = "0.3.0"
 edition = "2021"
 authors = ["Arkptz <arkptz@gmail.com>"]
 description = "Convert mitmproxy flow dumps and HAR files to OpenAPI 3.0 specs — fast Rust rewrite of mitmproxy2swagger"
