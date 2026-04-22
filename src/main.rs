@@ -115,7 +115,6 @@ fn main() -> Result<()> {
 
             let config = Config {
                 prefix: args.prefix.clone(),
-                param_regex: args.param_regex.clone(),
                 openapi_title: args.openapi_title.clone(),
                 openapi_version: args.openapi_version.clone(),
                 exclude_headers: parse_comma_list(&args.exclude_headers),

@@ -15,7 +15,6 @@ pub trait CapturedRequest {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub prefix: String,
-    pub param_regex: Option<String>,
     pub openapi_title: Option<String>,
     pub openapi_version: String,
     pub exclude_headers: Vec<String>,

@@ -110,10 +110,6 @@ pub struct GenerateArgs {
     #[arg(long, value_enum, default_value_t = InputFormat::Auto)]
     pub format: InputFormat,
 
-    /// Custom regex for parameter detection
-    #[arg(long)]
-    pub param_regex: Option<String>,
-
     /// Custom title for the OpenAPI spec
     #[arg(long)]
     pub openapi_title: Option<String>,
