@@ -33,8 +33,18 @@ expand = true
 heading-split-level = 3
 
 [output.linkcheck]
-warning-policy = "warn"
+warning-policy = "error"
 follow-web-links = false
+exclude = [
+  # CHANGELOG: [Unreleased], [skip ci], [0.1.0]
+  '^Unreleased$',
+  '^skip ci$',
+  '^\d+\.\d+(\.\d+)?$',
+  # Benchmark table units: Mean [s], Min [s], Max [s]
+  '^s$',
+  # Benchmark workflow path inside included docs/benchmarks.md
+  '\.github/workflows/bench\.yml',
+]
 
 [preprocessor.toc]
 command = "mdbook-toc"
