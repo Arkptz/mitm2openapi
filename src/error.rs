@@ -1,4 +1,5 @@
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     #[error("TNetString parse error at byte {offset}: {message}")]
     TNetParse { offset: usize, message: String },
