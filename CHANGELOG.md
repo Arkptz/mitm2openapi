@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4](https://github.com/Arkptz/mitm2openapi/compare/v0.2.3...v0.2.4) - 2026-04-22
+
+### Fixed
+
+- *(params)* preserve multi-byte UTF-8 in urlencoding_decode
+
+### Other
+
+- *(params)* add UTF-8 roundtrip and overlong rejection cases
+- regenerate demo.gif [skip ci]
+
 ## [0.2.3](https://github.com/Arkptz/mitm2openapi/compare/v0.2.2...v0.2.3) - 2026-04-22
 
 ### Fixed
