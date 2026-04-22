@@ -191,7 +191,8 @@ fn parse_length<R: Read>(reader: &mut TrackingReader<R>) -> Result<Option<usize>
         }
     }
 
-    let s = std::str::from_utf8(&digits).expect("digits are ASCII");
+    let s = std::str::from_utf8(&digits)
+        .map_err(|e| reader.make_error(format!("non-ASCII in length prefix: {e}")))?;
     let len: usize = s.parse().map_err(|e| Error::TNetParse {
         offset: start_offset,
         message: format!("invalid length value: {e}"),
@@ -495,6 +496,7 @@ pub fn parse(data: &[u8]) -> Result<TNetValue, Error> {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

@@ -107,7 +107,7 @@ fn cap_body(body: &[u8], url: &str) -> Vec<u8> {
             url = %url,
             "truncating oversized body"
         );
-        body[..MAX_BODY_SIZE].to_vec()
+        body.get(..MAX_BODY_SIZE).unwrap_or(body).to_vec()
     } else {
         body.to_vec()
     }
@@ -121,10 +121,9 @@ fn parse_headers(val: &TNetValue) -> Vec<(String, String)> {
     list.iter()
         .filter_map(|pair| {
             let inner = pair.as_list()?;
-            if inner.len() < 2 {
-                return None;
-            }
-            let name = match value_to_string_strict(&inner[0]) {
+            let name_val = inner.first()?;
+            let value_val = inner.get(1)?;
+            let name = match value_to_string_strict(name_val) {
                 Some(n) => n,
                 None => {
                     warn!(event = "header_name_invalid_utf8", "dropping header with non-UTF-8 name");
@@ -135,10 +134,10 @@ fn parse_headers(val: &TNetValue) -> Vec<(String, String)> {
                 warn!(event = "header_name_too_large", size = name.len(), max = MAX_HEADER_NAME_SIZE, "dropping header with oversized name");
                 return None;
             }
-            let value = value_to_string(&inner[1])?;
+            let value = value_to_string(value_val)?;
             let value = if value.len() > MAX_HEADER_VALUE_SIZE {
                 warn!(event = "header_value_too_large", size = value.len(), max = MAX_HEADER_VALUE_SIZE, name = %name, "truncating oversized header value");
-                value[..MAX_HEADER_VALUE_SIZE].to_string()
+                value.get(..MAX_HEADER_VALUE_SIZE).unwrap_or(&value).to_string()
             } else {
                 value
             };
@@ -277,7 +276,6 @@ fn parse_flow(flow: &TNetValue) -> Result<MitmproxyFlowWrapper> {
         .map(|b| cap_body(b, &url));
 
     let response = flow.get("response");
-    let has_response = response.is_some_and(|r| !r.is_null());
 
     let (
         response_status_code,
@@ -286,8 +284,7 @@ fn parse_flow(flow: &TNetValue) -> Result<MitmproxyFlowWrapper> {
         response_body,
         response_content_type,
     ) =
-        if has_response {
-            let resp = response.unwrap();
+        if let Some(resp) = response.filter(|r| !r.is_null()) {
             let status =
                 resp.get("status_code").and_then(|v| v.as_int()).and_then(
                     |n| match u16::try_from(n).ok().filter(|s| (100..=599).contains(s)) {
@@ -365,7 +362,17 @@ pub fn stream_mitmproxy_file(
 
 pub fn stream_mitmproxy_dir(path: &Path) -> Result<RequestIter> {
     let mut entries: Vec<_> = std::fs::read_dir(path)?
-        .filter_map(|e| e.ok())
+        .filter_map(|e| match e {
+            Ok(entry) => Some(entry),
+            Err(err) => {
+                warn!(
+                    event = "dir_entry_skipped",
+                    error = %err,
+                    "skipping unreadable directory entry"
+                );
+                None
+            }
+        })
         .filter(|e| {
             e.path()
                 .extension()
@@ -413,6 +420,7 @@ pub fn mitmproxy_heuristic(path: &Path) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
