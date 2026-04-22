@@ -274,6 +274,86 @@ fn has_operation(path_item: &PathItem, method: &str) -> bool {
     }
 }
 
+fn merge_response_content(existing: &mut Response, incoming: &Response) {
+    for (media_type, incoming_mt) in &incoming.content {
+        if let Some(existing_mt) = existing.content.get_mut(media_type) {
+            let existing_schema = existing_mt.schema.take();
+            let incoming_schema = incoming_mt.schema.clone();
+            existing_mt.schema = match (existing_schema, incoming_schema) {
+                (Some(a), Some(b)) => Some(merge_schemas_one_of(a, b)),
+                (Some(a), None) => Some(a),
+                (None, b) => b,
+            };
+        } else {
+            existing
+                .content
+                .insert(media_type.clone(), incoming_mt.clone());
+        }
+    }
+}
+
+fn merge_schemas_one_of(
+    a: ReferenceOr<openapiv3::Schema>,
+    b: ReferenceOr<openapiv3::Schema>,
+) -> ReferenceOr<openapiv3::Schema> {
+    if schema_refs_equal(&a, &b) {
+        return a;
+    }
+    let mut variants = Vec::new();
+    collect_one_of_variants(a, &mut variants);
+    collect_one_of_variants(b, &mut variants);
+    dedup_schema_variants(&mut variants);
+
+    if variants.len() == 1 {
+        return variants.pop().unwrap();
+    }
+
+    ReferenceOr::Item(openapiv3::Schema {
+        schema_data: openapiv3::SchemaData::default(),
+        schema_kind: openapiv3::SchemaKind::OneOf { one_of: variants },
+    })
+}
+
+fn collect_one_of_variants(
+    schema_ref: ReferenceOr<openapiv3::Schema>,
+    out: &mut Vec<ReferenceOr<openapiv3::Schema>>,
+) {
+    if let ReferenceOr::Item(ref s) = schema_ref {
+        if let openapiv3::SchemaKind::OneOf { ref one_of } = s.schema_kind {
+            for v in one_of {
+                out.push(v.clone());
+            }
+            return;
+        }
+    }
+    out.push(schema_ref);
+}
+
+fn dedup_schema_variants(variants: &mut Vec<ReferenceOr<openapiv3::Schema>>) {
+    let mut i = 0;
+    while i < variants.len() {
+        let mut j = i + 1;
+        while j < variants.len() {
+            if schema_refs_equal(&variants[i], &variants[j]) {
+                variants.remove(j);
+            } else {
+                j += 1;
+            }
+        }
+        i += 1;
+    }
+}
+
+fn schema_refs_equal(
+    a: &ReferenceOr<openapiv3::Schema>,
+    b: &ReferenceOr<openapiv3::Schema>,
+) -> bool {
+    match (serde_json::to_value(a), serde_json::to_value(b)) {
+        (Ok(va), Ok(vb)) => va == vb,
+        _ => false,
+    }
+}
+
 impl OpenApiBuilder {
     pub fn new(prefix: &str, config: &Config, templates: Vec<String>) -> Self {
         let host = host_from_prefix(prefix);
@@ -356,12 +436,53 @@ impl OpenApiBuilder {
             }
         };
 
-        if let Some(ReferenceOr::Item(existing)) = self.spec.paths.paths.get(&template_path) {
+        // Build the new response for this request
+        let status_code = request.get_response_status_code().unwrap_or(200);
+        let reason = request.get_response_reason().unwrap_or("OK").to_string();
+
+        let mut new_response = Response {
+            description: reason,
+            ..Response::default()
+        };
+
+        if let Some(resp_body) = request.get_response_body() {
+            let resp_ct = request.get_response_content_type();
+            if let Some((media_type_str, val)) = parse_body(resp_body, resp_ct) {
+                let resp_schema = schema::value_to_schema(&val);
+                let mut content = IndexMap::new();
+                content.insert(
+                    media_type_str,
+                    MediaType {
+                        schema: Some(ReferenceOr::Item(resp_schema)),
+                        ..MediaType::default()
+                    },
+                );
+                new_response.content = content;
+            }
+        }
+
+        // If operation already exists for this (path, method), merge response only
+        if let Some(ReferenceOr::Item(existing)) = self.spec.paths.paths.get_mut(&template_path) {
             if has_operation(existing, &method) {
+                if let Some(Some(op)) = get_operation_mut(existing, &method).map(|s| s.as_mut()) {
+                    let sc = StatusCode::Code(status_code);
+                    if let Some(existing_resp_ref) = op.responses.responses.get_mut(&sc) {
+                        // Same status code exists — merge schemas via oneOf
+                        if let ReferenceOr::Item(existing_resp) = existing_resp_ref {
+                            merge_response_content(existing_resp, &new_response);
+                        }
+                    } else {
+                        // New status code — add directly
+                        op.responses
+                            .responses
+                            .insert(sc, ReferenceOr::Item(new_response));
+                    }
+                }
                 return;
             }
         }
 
+        // New operation — build from scratch
         let mut operation = Operation {
             summary: Some(format!("{} {}", method, template_path)),
             ..Operation::default()
@@ -418,32 +539,11 @@ impl OpenApiBuilder {
             }
         }
 
-        let status_code = request.get_response_status_code().unwrap_or(200);
-        let reason = request.get_response_reason().unwrap_or("OK").to_string();
-
-        let mut response = Response {
-            description: reason,
-            ..Response::default()
-        };
-
-        if let Some(resp_body) = request.get_response_body() {
-            let resp_ct = request.get_response_content_type();
-            if let Some((media_type_str, val)) = parse_body(resp_body, resp_ct) {
-                let schema = schema::value_to_schema(&val);
-                let mut content = IndexMap::new();
-                content.insert(
-                    media_type_str,
-                    MediaType {
-                        schema: Some(ReferenceOr::Item(schema)),
-                        ..MediaType::default()
-                    },
-                );
-                response.content = content;
-            }
-        }
-
         let mut responses = IndexMap::new();
-        responses.insert(StatusCode::Code(status_code), ReferenceOr::Item(response));
+        responses.insert(
+            StatusCode::Code(status_code),
+            ReferenceOr::Item(new_response),
+        );
         operation.responses = Responses {
             responses,
             ..Responses::default()
@@ -573,7 +673,6 @@ mod tests {
     fn test_config() -> Config {
         Config {
             prefix: "https://api.example.com".to_string(),
-            param_regex: None,
             openapi_title: None,
             openapi_version: "1.0.0".to_string(),
             exclude_headers: vec![],
@@ -775,10 +874,10 @@ mod tests {
         assert_eq!(resp.description, "Created");
     }
 
-    // ── First-seen-wins ────────────────────────────────────────────
+    // ── Same status code merges via oneOf ─────────────────────────
 
     #[test]
-    fn first_seen_wins() {
+    fn same_status_identical_schema_no_one_of() {
         let config = test_config();
         let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
 
@@ -794,7 +893,6 @@ mod tests {
         let path_item = spec.paths.paths["/users"].as_item().unwrap();
         let get_op = path_item.get.as_ref().unwrap();
 
-        // Should have the first request's response (version: 1 → object with "version" key)
         let resp = get_op
             .responses
             .responses
@@ -807,15 +905,95 @@ mod tests {
         match &schema.schema_kind {
             openapiv3::SchemaKind::Type(openapiv3::Type::Object(obj)) => {
                 assert!(obj.properties.contains_key("version"));
-                // The first request had integer value
-                let version_schema = obj.properties["version"].as_item().unwrap();
-                assert!(matches!(
-                    version_schema.schema_kind,
-                    openapiv3::SchemaKind::Type(openapiv3::Type::Integer(_))
-                ));
             }
-            other => panic!("expected Object, got {:?}", other),
+            other => panic!(
+                "expected Object (identical schemas should not produce oneOf), got {:?}",
+                other
+            ),
         }
+    }
+
+    #[test]
+    fn same_status_divergent_schemas_one_of() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req1 = MockRequest::get("https://api.example.com/users")
+            .with_json_response(&serde_json::json!({"name": "Alice"}));
+        let req2 = MockRequest::get("https://api.example.com/users")
+            .with_json_response(&serde_json::json!({"error": "not found"}));
+
+        builder.add_request(&req1);
+        builder.add_request(&req2);
+        let spec = builder.build();
+
+        let path_item = spec.paths.paths["/users"].as_item().unwrap();
+        let get_op = path_item.get.as_ref().unwrap();
+
+        let resp = get_op
+            .responses
+            .responses
+            .get(&StatusCode::Code(200))
+            .unwrap()
+            .as_item()
+            .unwrap();
+        let media = &resp.content["application/json"];
+        let schema = media.schema.as_ref().unwrap().as_item().unwrap();
+        assert!(
+            matches!(schema.schema_kind, openapiv3::SchemaKind::OneOf { .. }),
+            "divergent schemas should produce oneOf, got {:?}",
+            schema.schema_kind
+        );
+        if let openapiv3::SchemaKind::OneOf { one_of } = &schema.schema_kind {
+            assert_eq!(one_of.len(), 2, "should have exactly 2 variants");
+        }
+    }
+
+    #[test]
+    fn multiple_status_codes_merged() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req1 = MockRequest::post("https://api.example.com/users")
+            .with_json_request_body(&serde_json::json!({"name": "Bob"}))
+            .with_json_response(&serde_json::json!({"id": 1}))
+            .with_status(200, "OK");
+        let req2 = MockRequest::post("https://api.example.com/users")
+            .with_json_request_body(&serde_json::json!({"name": ""}))
+            .with_json_response(&serde_json::json!({"error": "invalid"}))
+            .with_status(400, "Bad Request");
+
+        builder.add_request(&req1);
+        builder.add_request(&req2);
+        let spec = builder.build();
+
+        let path_item = spec.paths.paths["/users"].as_item().unwrap();
+        let post_op = path_item.post.as_ref().unwrap();
+
+        assert!(
+            post_op
+                .responses
+                .responses
+                .contains_key(&StatusCode::Code(200)),
+            "should have 200 response"
+        );
+        assert!(
+            post_op
+                .responses
+                .responses
+                .contains_key(&StatusCode::Code(400)),
+            "should have 400 response"
+        );
+
+        let resp_400 = post_op
+            .responses
+            .responses
+            .get(&StatusCode::Code(400))
+            .unwrap()
+            .as_item()
+            .unwrap();
+        assert_eq!(resp_400.description, "Bad Request");
+        assert!(resp_400.content.contains_key("application/json"));
     }
 
     // ── Different methods on same path don't conflict ──────────────
