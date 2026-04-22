@@ -11,6 +11,7 @@ A Rust rewrite of [mitmproxy2swagger](https://github.com/alufers/mitmproxy2swagg
 [![Crates.io](https://img.shields.io/crates/v/mitm2openapi.svg)](https://crates.io/crates/mitm2openapi)
 [![Downloads](https://img.shields.io/crates/d/mitm2openapi.svg)](https://crates.io/crates/mitm2openapi)
 [![docs.rs](https://img.shields.io/docsrs/mitm2openapi)](https://docs.rs/mitm2openapi)
+[![docs](https://img.shields.io/badge/docs-arkptz.github.io-blue)](https://arkptz.github.io/mitm2openapi/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 <img src="docs/demo.gif" alt="Demo: capture → discover → generate → browse Swagger UI" width="720">
@@ -39,17 +40,13 @@ Credit to [@alufers](https://github.com/alufers) for the original tool that pion
 
 ## Installation
 
-### From binary releases
-
-Download a pre-built binary from [GitHub Releases](https://github.com/Arkptz/mitm2openapi/releases).
-
-### From source
-
 ```bash
-cargo install --git https://github.com/Arkptz/mitm2openapi
+cargo install mitm2openapi
 ```
 
-## Quick Start
+Or download a pre-built binary from [GitHub Releases](https://github.com/Arkptz/mitm2openapi/releases).
+
+## Quick start
 
 ```bash
 # 1. Capture traffic with mitmproxy
@@ -64,206 +61,13 @@ mitm2openapi discover -i capture.flow -o templates.yaml -p "https://api.example.
 mitm2openapi generate -i capture.flow -t templates.yaml -o openapi.yaml -p "https://api.example.com"
 ```
 
-### Skip the manual edit
+## Documentation
 
-If you know which paths you care about up front, use `--exclude-patterns`
-and `--include-patterns` to let `discover` do the curation:
-
-```bash
-mitm2openapi discover \
-  -i capture.flow -o templates.yaml -p "https://api.example.com" \
-  --exclude-patterns '/static/**,/images/**,*.css,*.js,*.svg' \
-  --include-patterns '/api/**,/v2/**'
-
-mitm2openapi generate \
-  -i capture.flow -t templates.yaml -o openapi.yaml -p "https://api.example.com"
-```
-
-Paths matching `--include-patterns` are auto-activated (emitted without
-the `ignore:` prefix). Paths matching `--exclude-patterns` are dropped
-entirely. Everything else still gets `ignore:` for manual review.
-
-<details>
-<summary><strong>CLI Reference</strong> (click to expand)</summary>
-
-### `discover`
-
-Scan captured traffic and produce a templates file listing all observed endpoints.
-
-```
-mitm2openapi discover [OPTIONS] -i <INPUT> -o <OUTPUT> -p <PREFIX>
-```
-
-| Option | Description |
-|--------|-------------|
-| `-i, --input <PATH>` | Input file (flow dump or HAR) |
-| `-o, --output <PATH>` | Output YAML templates file |
-| `-p, --prefix <URL>` | API prefix URL to filter requests |
-| `--format <FORMAT>` | Input format: `auto`, `har`, `mitmproxy` (default: `auto`) |
-| `--exclude-patterns <GLOBS>` | Comma-separated globs; matching paths are dropped entirely. `*` = single segment, `**` = any subtree. E.g. `/static/**,*.css` |
-| `--include-patterns <GLOBS>` | Comma-separated globs; matching paths are emitted without `ignore:` (auto-activated for `generate`) |
-| `--max-input-size <BYTES>` | Maximum input file size (default: `2GiB`). Accepts suffixes: `KiB`, `MiB`, `GiB` |
-| `--allow-symlinks` | Allow symlinked input files (default: rejected for safety) |
-| `--strict` | Treat warnings as errors; exit code 2 if any cap fires, flow is rejected, or parse error occurs |
-| `--report <PATH>` | Write a structured JSON processing report to the given path |
-
-### `generate`
-
-Generate an OpenAPI 3.0 spec from captured traffic using a curated templates file.
-
-```
-mitm2openapi generate [OPTIONS] -i <INPUT> -t <TEMPLATES> -o <OUTPUT> -p <PREFIX>
-```
-
-| Option | Description |
-|--------|-------------|
-| `-i, --input <PATH>` | Input file (flow dump or HAR) |
-| `-t, --templates <PATH>` | Templates YAML file (from `discover`) |
-| `-o, --output <PATH>` | Output OpenAPI YAML file |
-| `-p, --prefix <URL>` | API prefix URL |
-| `--format <FORMAT>` | Input format: `auto`, `har`, `mitmproxy` (default: `auto`) |
-| `--openapi-title <TITLE>` | Custom title for the spec |
-| `--openapi-version <VER>` | Custom spec version (default: `1.0.0`) |
-| `--exclude-headers <LIST>` | Comma-separated headers to exclude |
-| `--exclude-cookies <LIST>` | Comma-separated cookies to exclude |
-| `--include-headers` | Include headers in the spec |
-| `--ignore-images` | Ignore image content types |
-| `--suppress-params` | Suppress parameter suggestions |
-| `--tags-overrides <JSON>` | JSON string for tag overrides |
-| `--max-input-size <BYTES>` | Maximum input file size (default: `2GiB`). Accepts suffixes: `KiB`, `MiB`, `GiB` |
-| `--max-payload-size <BYTES>` | Maximum tnetstring payload size (default: `256MiB`) |
-| `--max-depth <N>` | Maximum tnetstring nesting depth (default: `256`) |
-| `--max-body-size <BYTES>` | Maximum request/response body size (default: `64MiB`) |
-| `--allow-symlinks` | Allow symlinked input files (default: rejected for safety) |
-| `--strict` | Treat warnings as errors; exit code 2 if any cap fires, flow is rejected, or parse error occurs |
-| `--report <PATH>` | Write a structured JSON processing report to the given path |
-
-</details>
-
-## Resource Limits
-
-To prevent denial-of-service when processing untrusted captures, `mitm2openapi`
-enforces several configurable limits:
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--max-input-size` | 2 GiB | Reject files larger than this before reading |
-| `--max-payload-size` | 256 MiB | Cap on individual tnetstring payload allocation |
-| `--max-depth` | 256 | Recursion depth limit for nested tnetstring structures |
-| `--max-body-size` | 64 MiB | Maximum request/response body considered during schema inference |
-| `--allow-symlinks` | off | By default, symlinked inputs are rejected to prevent path-traversal on shared CI runners |
-
-In addition to the configurable limits above, the following per-field caps are
-applied unconditionally to prevent data corruption:
-
-| Field | Cap | Behaviour |
-|-------|-----|-----------|
-| Header name | 8 KiB | Dropped (other headers still processed) |
-| Header value | 64 KiB | Truncated to cap |
-| Form fields per request | 1 000 | Excess fields ignored |
-| URL scheme | `http` / `https` only | Non-HTTP flows silently skipped |
-| Port number | 1–65 535 | Out-of-range port drops the request |
-| HTTP status code | 100–599 | Invalid codes treated as no response |
-
-Identity fields (scheme, host, path, method, header names) require valid UTF-8.
-Flows with non-UTF-8 identity bytes are skipped to prevent data aliasing through
-replacement-character collisions. Control characters in paths are stripped
-automatically.
-
-Increase `--max-input-size` if you work with captures larger than 2 GiB (e.g.
-`--max-input-size 8GiB`). The other limits rarely need tuning.
-
-Both mitmproxy flow files and HAR files are processed incrementally — memory usage
-stays bounded regardless of input size.
-
-## Diagnostics
-
-When the tnetstring parser encounters corruption in a mitmproxy flow file, it
-halts and emits a warn-level log with the byte offset, number of successfully
-parsed entries, and an error classification. No resync is attempted — binary
-payloads can contain bytes that mimic valid tnetstring length prefixes, so
-scanning forward would produce phantom flows.
-
-### Structured report (`--report`)
-
-Pass `--report <PATH>` to either `discover` or `generate` to write a JSON
-processing summary. This is useful for CI pipelines that need structured data
-instead of log scraping.
-
-```json
-{
-  "report_version": 1,
-  "tool_version": "0.2.3",
-  "input": {
-    "path": "capture.flow",
-    "format": "Auto",
-    "size_bytes": 102400
-  },
-  "result": {
-    "flows_read": 150,
-    "flows_emitted": 148,
-    "paths_in_spec": 12
-  },
-  "events": {
-    "parse_error": {
-      "TNetString parse error at byte 98304: unexpected end of input": 1
-    }
-  }
-}
-```
-
-### Strict mode
-
-Pass `--strict` to either `discover` or `generate` to treat any warning-level
-event as a hard failure. The process exits with code 2 if any resource cap
-fired, a flow was rejected, or a parse error was encountered.
-
-This is designed for CI gates where silent degradation is unacceptable:
-
-```bash
-mitm2openapi discover -i capture.flow -o templates.yaml -p https://api.example.com --strict \
-  || echo "FAIL: corrupt or over-limit flows detected"
-```
-
-Without `--strict`, the same conditions are logged at warn level and processing
-continues (exit code 0).
-
-## Supported Formats
-
-| Format | Versions | Extension |
-|--------|----------|-----------|
-| mitmproxy flow dumps | v19, v20, v21 | `.flow` |
-| HAR (HTTP Archive) | 1.2 (incrementally parsed) | `.har` |
-
-Format is auto-detected from file content. Use `--format` to override.
-
-## Migration from Python mitmproxy2swagger
-
-| Python (`mitmproxy2swagger`) | Rust (`mitm2openapi`) |
-|-----|-----|
-| `pip install mitmproxy2swagger` | Single binary, no runtime |
-| `mitmproxy2swagger -i <file> -o <spec> -p <prefix>` | Two-step: `discover` then `generate` |
-| Edits spec file in-place | Separate templates file for curation |
-| Requires Python 3.x + mitmproxy | Standalone binary |
-| Supports mitmproxy only | Supports mitmproxy flow dumps + HAR |
-
-### Key differences
-
-- **Two-step workflow**: `discover` produces a templates file; you curate it; `generate` produces the final spec. This separates endpoint selection from spec generation.
-- **Templates file**: Discovered endpoints are prefixed with `ignore:`. Remove the prefix to include an endpoint. This replaces editing the output spec directly.
-- **No Python dependency**: Ships as a single static binary for Linux, macOS, and Windows.
-- **HAR support**: Process HAR exports from browser DevTools or other HTTP tools.
+Full documentation at **[arkptz.github.io/mitm2openapi](https://arkptz.github.io/mitm2openapi/)** — covers installation, traffic capture setup, the full discover → curate → generate pipeline, CLI reference, resource limits, filtering, strict mode, format details, benchmarks, and security model.
 
 ## Benchmarks
 
-Automated CI benchmark runs weekly against the Python original
-([`mitmproxy2swagger`](https://github.com/alufers/mitmproxy2swagger)). See
-[docs/benchmarks.md](docs/benchmarks.md) for the latest timing and memory
-comparison on a ~80 MB synthetic capture, or
-trigger a fresh run via
-[Actions → Benchmark](../../actions/workflows/bench.yml).
-
-Reproduce locally with the commands documented in the workflow file.
+Automated CI benchmarks run weekly against the Python original. See [docs/benchmarks.md](docs/benchmarks.md) for the latest comparison on a ~80 MB synthetic capture.
 
 ## Contributing
 
