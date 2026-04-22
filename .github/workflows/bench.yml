@@ -125,14 +125,6 @@ jobs:
           export -f run_py run_rs
           export RUST OUT
 
-          # Petstore small fixture
-          hyperfine --warmup 3 --runs 10 --shell=bash \
-            --export-json $OUT/petstore.json \
-            --export-markdown $OUT/petstore.md \
-            --command-name "Python mitmproxy2swagger" "run_py '$(pwd)/testdata/flows/multiple.flow' 'http://petstore:8080'" \
-            --command-name "Rust mitm2openapi"         "run_rs '$(pwd)/testdata/flows/multiple.flow' 'http://petstore:8080'"
-
-          # Synthetic large
           hyperfine --warmup 2 --runs 5 --shell=bash \
             --export-json $OUT/synthetic.json \
             --export-markdown $OUT/synthetic.md \
@@ -155,7 +147,6 @@ jobs:
             local rs_peak=$(( rs_discover > rs_generate ? rs_discover : rs_generate ))
             printf "| %s | %s KB | %s KB |\n" "$name" "$py_rss" "$rs_peak" >> $OUT/rss.md
           }
-          measure_rss "Petstore (11 KB)" "$(pwd)/testdata/flows/multiple.flow" "http://petstore:8080"
           measure_rss "Synthetic (~80 MB)" "/tmp/bench/big.flow" "http://localhost:18000"
 
           # Combine summary
@@ -164,12 +155,8 @@ jobs:
             echo
             echo "_Run: $(date -u '+%Y-%m-%d %H:%M UTC'), commit \`${GITHUB_SHA:0:8}\`, runner: $(uname -sr)_"
             echo
-            echo "## Timing"
+            echo "## Timing — Synthetic (~80 MB, 40k requests)"
             echo
-            echo "### Petstore (11 KB, 18 requests)"
-            cat $OUT/petstore.md
-            echo
-            echo "### Synthetic (~80 MB, 40k requests)"
             cat $OUT/synthetic.md
             echo
             cat $OUT/rss.md

@@ -9,10 +9,11 @@ Methodology: `hyperfine --warmup N --runs M` runs each tool's full pipeline
 (discover + generate for Rust; 2x invocation for Python, since the tool requires
 two passes to emit templates then the spec). RSS measured via `/usr/bin/time -f %M`.
 
-Fixtures:
-- **Petstore** (11 KB): captured API session against the Swagger Petstore demo
+Fixture:
 - **Synthetic** (~80 MB, 40k requests): generated via `httpbin + mitmdump + hey`
-  during the workflow run — 8 endpoint shapes, 5k requests each
+  during the workflow run — 8 endpoint shapes, 5k requests each. Represents a
+  realistic mid-sized capture; small fixtures are dominated by Python's interpreter
+  boot cost and don't reflect real-world processing performance.
 
 Run the benchmark manually: [Actions → Benchmark → Run workflow](../../actions/workflows/bench.yml).
 
