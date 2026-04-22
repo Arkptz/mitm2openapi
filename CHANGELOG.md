@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/Arkptz/mitm2openapi/compare/v0.2.6...v0.3.0) - 2026-04-22
+
+### Added
+
+- *(report)* track cap firings and parse errors in processing report
+- *(cli)* add --report flag for structured processing summary
+- *(tnetstring)* emit byte offset and error kind on parse halt
+
+### Other
+
+- *(readme)* document --report flag and parse halt diagnostics
+- *(report)* verify report file schema and contents
+- *(tnetstring)* verify parse halt diagnostics and no-resync on binary payload
+
 ## [0.2.6](https://github.com/Arkptz/mitm2openapi/compare/v0.2.5...v0.2.6) - 2026-04-22
 
 ### Fixed
