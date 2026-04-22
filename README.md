@@ -102,6 +102,8 @@ mitm2openapi discover [OPTIONS] -i <INPUT> -o <OUTPUT> -p <PREFIX>
 | `--format <FORMAT>` | Input format: `auto`, `har`, `mitmproxy` (default: `auto`) |
 | `--exclude-patterns <GLOBS>` | Comma-separated globs; matching paths are dropped entirely. `*` = single segment, `**` = any subtree. E.g. `/static/**,*.css` |
 | `--include-patterns <GLOBS>` | Comma-separated globs; matching paths are emitted without `ignore:` (auto-activated for `generate`) |
+| `--max-input-size <BYTES>` | Maximum input file size (default: `2GiB`). Accepts suffixes: `KiB`, `MiB`, `GiB` |
+| `--allow-symlinks` | Allow symlinked input files (default: rejected for safety) |
 
 ### `generate`
 
@@ -127,8 +129,32 @@ mitm2openapi generate [OPTIONS] -i <INPUT> -t <TEMPLATES> -o <OUTPUT> -p <PREFIX
 | `--ignore-images` | Ignore image content types |
 | `--suppress-params` | Suppress parameter suggestions |
 | `--tags-overrides <JSON>` | JSON string for tag overrides |
+| `--max-input-size <BYTES>` | Maximum input file size (default: `2GiB`). Accepts suffixes: `KiB`, `MiB`, `GiB` |
+| `--max-payload-size <BYTES>` | Maximum tnetstring payload size (default: `256MiB`) |
+| `--max-depth <N>` | Maximum tnetstring nesting depth (default: `256`) |
+| `--max-body-size <BYTES>` | Maximum request/response body size (default: `64MiB`) |
+| `--allow-symlinks` | Allow symlinked input files (default: rejected for safety) |
 
 </details>
+
+## Resource Limits
+
+To prevent denial-of-service when processing untrusted captures, `mitm2openapi`
+enforces several configurable limits:
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--max-input-size` | 2 GiB | Reject files larger than this before reading |
+| `--max-payload-size` | 256 MiB | Cap on individual tnetstring payload allocation |
+| `--max-depth` | 256 | Recursion depth limit for nested tnetstring structures |
+| `--max-body-size` | 64 MiB | Maximum request/response body considered during schema inference |
+| `--allow-symlinks` | off | By default, symlinked inputs are rejected to prevent path-traversal on shared CI runners |
+
+Increase `--max-input-size` if you work with captures larger than 2 GiB (e.g.
+`--max-input-size 8GiB`). The other limits rarely need tuning.
+
+Mitmproxy flow files are now processed incrementally — memory usage stays bounded
+regardless of input size. HAR files are still loaded in full (streaming HAR is planned).
 
 ## Supported Formats
 
