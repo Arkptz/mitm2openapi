@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/Arkptz/mitm2openapi/compare/v0.2.0...v0.2.1) - 2026-04-22
+
+### Added
+
+- *(reader)* add stream_mitmproxy_file and stream_mitmproxy_dir
+- *(tnetstring)* add streaming iterator TNetStringIter
+
+### Other
+
+- *(readme)* document resource-limit flags and streaming behavior
+- *(main)* switch discover and generate to streaming pipeline
+- *(path_matching)* cache compiled regexes in CompiledTemplates
+- *(builder)* add discover_paths_streaming variant
+- regenerate demo.gif [skip ci]
+
 ## [0.2.0](https://github.com/Arkptz/mitm2openapi/compare/v0.1.2...v0.2.0) - 2026-04-22
 
 ### Added
