@@ -1,5 +1,3 @@
-# Contributing — Local Testing Guide
-
 This document covers how to run the three test tracks locally.
 
 ## Prerequisites
