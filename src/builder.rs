@@ -241,17 +241,21 @@ fn parse_body(body: &[u8], content_type: Option<&str>) -> Option<(String, serde_
 }
 
 /// Get the method-specific operation slot from a PathItem (mutable).
-fn get_operation_mut<'a>(path_item: &'a mut PathItem, method: &str) -> &'a mut Option<Operation> {
+/// Returns `None` for HTTP methods not supported by the OpenAPI spec.
+fn get_operation_mut<'a>(
+    path_item: &'a mut PathItem,
+    method: &str,
+) -> Option<&'a mut Option<Operation>> {
     match method.to_uppercase().as_str() {
-        "GET" => &mut path_item.get,
-        "PUT" => &mut path_item.put,
-        "POST" => &mut path_item.post,
-        "DELETE" => &mut path_item.delete,
-        "OPTIONS" => &mut path_item.options,
-        "HEAD" => &mut path_item.head,
-        "PATCH" => &mut path_item.patch,
-        "TRACE" => &mut path_item.trace,
-        _ => &mut path_item.get, // fallback
+        "GET" => Some(&mut path_item.get),
+        "PUT" => Some(&mut path_item.put),
+        "POST" => Some(&mut path_item.post),
+        "DELETE" => Some(&mut path_item.delete),
+        "OPTIONS" => Some(&mut path_item.options),
+        "HEAD" => Some(&mut path_item.head),
+        "PATCH" => Some(&mut path_item.patch),
+        "TRACE" => Some(&mut path_item.trace),
+        _ => None,
     }
 }
 
@@ -312,6 +316,19 @@ impl OpenApiBuilder {
     pub fn add_request(&mut self, request: &dyn CapturedRequest) {
         let url = request.get_url();
         let method = request.get_method().to_uppercase();
+
+        if !matches!(
+            method.as_str(),
+            "GET" | "PUT" | "POST" | "DELETE" | "OPTIONS" | "HEAD" | "PATCH" | "TRACE"
+        ) {
+            warn!(
+                event = "unknown_http_method",
+                method = %method,
+                url = %url,
+                "skipping request with unknown HTTP method"
+            );
+            return;
+        }
 
         if !url.starts_with(&self.prefix) {
             return;
@@ -440,8 +457,9 @@ impl OpenApiBuilder {
             .or_insert_with(|| ReferenceOr::Item(PathItem::default()));
 
         if let ReferenceOr::Item(ref mut item) = path_item {
-            let slot = get_operation_mut(item, &method);
-            *slot = Some(operation);
+            if let Some(slot) = get_operation_mut(item, &method) {
+                *slot = Some(operation);
+            }
         }
     }
 
