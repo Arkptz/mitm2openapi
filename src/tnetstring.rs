@@ -394,6 +394,57 @@ pub fn parse_all_lenient(reader: &mut impl Read) -> Vec<Result<TNetValue, Error>
     results
 }
 
+/// Streaming iterator over consecutive TNetValues from a reader.
+///
+/// Exhausts after EOF or first parse error (tnetstring lacks framing delimiters).
+pub struct TNetStringIter<R> {
+    reader: TrackingReader<R>,
+    done: bool,
+    max_payload: usize,
+    max_depth: usize,
+}
+
+impl<R: Read> TNetStringIter<R> {
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader: TrackingReader::new(reader),
+            done: false,
+            max_payload: crate::MAX_PAYLOAD_SIZE,
+            max_depth: crate::MAX_DEPTH,
+        }
+    }
+
+    pub fn with_limits(reader: R, max_payload: usize, max_depth: usize) -> Self {
+        Self {
+            reader: TrackingReader::new(reader),
+            done: false,
+            max_payload,
+            max_depth,
+        }
+    }
+}
+
+impl<R: Read> Iterator for TNetStringIter<R> {
+    type Item = Result<TNetValue, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        match parse_value_with_depth(&mut self.reader, 0, self.max_payload, self.max_depth) {
+            Ok(Some(val)) => Some(Ok(val)),
+            Ok(None) => {
+                self.done = true;
+                None
+            }
+            Err(e) => {
+                self.done = true;
+                Some(Err(e))
+            }
+        }
+    }
+}
+
 /// Convenience: parse a single value from a byte slice.
 pub fn parse(data: &[u8]) -> Result<TNetValue, Error> {
     let mut cursor = std::io::Cursor::new(data);
