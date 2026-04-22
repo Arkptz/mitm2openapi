@@ -8,24 +8,24 @@ on:
       - 'Cargo.toml'
       - '.github/workflows/bench.yml'
   schedule:
-    - cron: '0 7 * * 1'  # Monday 07:00 UTC
+    - cron: '0 7 * * 1'
   workflow_dispatch:
 
 permissions:
-  contents: write  # write needed for auto-commit on schedule
+  contents: write
 
 concurrency:
   group: bench-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  FIXTURE_URL: https://github.com/Arkptz/mitm2openapi/releases/download/bench-fixtures-v1/big.flow
+  FIXTURE_SHA256_URL: https://github.com/Arkptz/mitm2openapi/releases/download/bench-fixtures-v1/big.flow.sha256
+  FIXTURE_PREFIX: http://localhost:18000
+
 jobs:
   bench:
     runs-on: ubuntu-latest
-    services:
-      httpbin:
-        image: mccutchen/go-httpbin:latest
-        ports:
-          - 18000:8080
     steps:
       - uses: actions/checkout@v4
 
@@ -40,18 +40,11 @@ jobs:
             target
           key: bench-cargo-${{ hashFiles('Cargo.lock') }}
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: stable
-
-      - name: Install system tools (hyperfine, hey)
+      - name: Install hyperfine
         run: |
           wget -q https://github.com/sharkdp/hyperfine/releases/download/v1.18.0/hyperfine_1.18.0_amd64.deb
           sudo dpkg -i hyperfine_1.18.0_amd64.deb
-          go install github.com/rakyll/hey@latest
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           hyperfine --version
-          "$(go env GOPATH)/bin/hey" -h 2>&1 | head -1 || true
 
       - name: Install Python mitmproxy2swagger
         run: |
@@ -59,50 +52,15 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           python -m pip show mitmproxy2swagger | head -3
 
-      - name: Verify Python tool
-        run: mitmproxy2swagger --help 2>&1 | head -3 || true
-
       - name: Build Rust release
         run: cargo build --release
 
-      - name: Wait for httpbin
-        run: |
-          for i in $(seq 1 10); do
-            if curl -sS http://localhost:18000/anything/probe > /dev/null; then
-              echo "httpbin ready"; break
-            fi
-            sleep 1
-          done
-
-      - name: Generate synthetic 80 MB flow
+      - name: Download benchmark fixture
         run: |
           mkdir -p /tmp/bench
-          # Start mitmdump as background proxy capturing to file
-          mitmdump --listen-port 18888 -w /tmp/bench/big.flow --set ssl_insecure=true -q \
-            > /tmp/bench/mitmdump.log 2>&1 &
-          MITM_PID=$!
-          sleep 3
-
-          # Verify proxy works through to httpbin service
-          curl -sS -x http://localhost:18888 http://localhost:18000/anything/probe > /dev/null
-
-          # 8 endpoints x 5k requests each = 40k total
-          ENDPOINTS=(
-            "http://localhost:18000/anything/users"
-            "http://localhost:18000/anything/users/42"
-            "http://localhost:18000/anything/posts"
-            "http://localhost:18000/anything/posts/100/comments"
-            "http://localhost:18000/anything/products/sku/abc-xyz"
-            "http://localhost:18000/anything/orders/2026-04-20"
-            "http://localhost:18000/anything/search?q=widget&page=3"
-            "http://localhost:18000/anything/auth/refresh"
-          )
-          for url in "${ENDPOINTS[@]}"; do
-            hey -n 5000 -c 50 -x http://localhost:18888 "$url" > /dev/null 2>&1 &
-          done
-          wait
-          sleep 2
-          kill $MITM_PID || true
+          wget -q "$FIXTURE_URL" -O /tmp/bench/big.flow
+          wget -q "$FIXTURE_SHA256_URL" -O /tmp/bench/big.flow.sha256
+          echo "$(cat /tmp/bench/big.flow.sha256)  /tmp/bench/big.flow" | sha256sum -c -
           ls -lh /tmp/bench/big.flow
 
       - name: Run benchmarks
@@ -132,34 +90,31 @@ jobs:
           hyperfine --warmup 2 --runs 5 --shell=bash \
             --export-json $OUT/synthetic.json \
             --export-markdown $OUT/synthetic.md \
-            --command-name "Python mitmproxy2swagger" "run_py '/tmp/bench/big.flow' 'http://localhost:18000'" \
-            --command-name "Rust mitm2openapi"         "run_rs '/tmp/bench/big.flow' 'http://localhost:18000'"
+            --command-name "Python mitmproxy2swagger" "run_py '/tmp/bench/big.flow' '$FIXTURE_PREFIX'" \
+            --command-name "Rust mitm2openapi"         "run_rs '/tmp/bench/big.flow' '$FIXTURE_PREFIX'"
 
-          # RSS measurements via /usr/bin/time
           echo "## Peak RSS" > $OUT/rss.md
-          echo "| Dataset | Python RSS | Rust RSS |" >> $OUT/rss.md
-          echo "|---------|-----------:|---------:|" >> $OUT/rss.md
-          measure_rss() {
-            local name=$1 flow=$2 prefix=$3
-            cp "$flow" $OUT/in.flow
-            mitmproxy2swagger -i $OUT/in.flow -o $OUT/py.yaml -p "$prefix" -f flow > /dev/null 2>&1
-            local py_rss=$(/usr/bin/time -f '%M' mitmproxy2swagger -i $OUT/in.flow -o $OUT/py.yaml -p "$prefix" -f flow 2>&1 > /dev/null | tail -1)
-            rm -f $OUT/tpl.yaml
-            local rs_discover=$(/usr/bin/time -f '%M' "$RUST" discover -i "$flow" -o $OUT/tpl.yaml -p "$prefix" 2>&1 > /dev/null | tail -1)
-            sed -i 's|^- ignore:|- |' $OUT/tpl.yaml
-            local rs_generate=$(/usr/bin/time -f '%M' "$RUST" generate -i "$flow" -t $OUT/tpl.yaml -o $OUT/rs.yaml -p "$prefix" 2>&1 > /dev/null | tail -1)
-            local rs_peak=$(( rs_discover > rs_generate ? rs_discover : rs_generate ))
-            printf "| %s | %s KB | %s KB |\n" "$name" "$py_rss" "$rs_peak" >> $OUT/rss.md
-          }
-          measure_rss "Synthetic (~80 MB)" "/tmp/bench/big.flow" "http://localhost:18000"
+          echo "| Tool | RSS |" >> $OUT/rss.md
+          echo "|------|----:|" >> $OUT/rss.md
+          cp /tmp/bench/big.flow $OUT/in.flow
+          mitmproxy2swagger -i $OUT/in.flow -o $OUT/py.yaml -p "$FIXTURE_PREFIX" -f flow > /dev/null 2>&1
+          py_rss=$(/usr/bin/time -f '%M' mitmproxy2swagger -i $OUT/in.flow -o $OUT/py.yaml -p "$FIXTURE_PREFIX" -f flow 2>&1 > /dev/null | tail -1)
+          rm -f $OUT/tpl.yaml
+          rs_discover=$(/usr/bin/time -f '%M' "$RUST" discover -i /tmp/bench/big.flow -o $OUT/tpl.yaml -p "$FIXTURE_PREFIX" 2>&1 > /dev/null | tail -1)
+          sed -i 's|^- ignore:|- |' $OUT/tpl.yaml
+          rs_generate=$(/usr/bin/time -f '%M' "$RUST" generate -i /tmp/bench/big.flow -t $OUT/tpl.yaml -o $OUT/rs.yaml -p "$FIXTURE_PREFIX" 2>&1 > /dev/null | tail -1)
+          rs_peak=$(( rs_discover > rs_generate ? rs_discover : rs_generate ))
+          printf "| Python mitmproxy2swagger | %s KB |\n" "$py_rss" >> $OUT/rss.md
+          printf "| Rust mitm2openapi        | %s KB |\n" "$rs_peak" >> $OUT/rss.md
 
-          # Combine summary
           {
             echo "# Benchmark results"
             echo
             echo "_Run: $(date -u '+%Y-%m-%d %H:%M UTC'), commit \`${GITHUB_SHA:0:8}\`, runner: $(uname -sr)_"
             echo
-            echo "## Timing — Synthetic (~80 MB, 40k requests)"
+            echo "Fixture: 89 MB, 40k requests across 8 endpoint shapes (\`bench-fixtures-v1\`)."
+            echo
+            echo "## Timing"
             echo
             cat $OUT/synthetic.md
             echo
