@@ -7,6 +7,8 @@ use crate::tnetstring;
 use crate::tnetstring::TNetValue;
 use crate::types::CapturedRequest;
 
+type RequestIter = Box<dyn Iterator<Item = Result<Box<dyn CapturedRequest>>>>;
+
 /// Wrapper around a parsed mitmproxy flow that implements CapturedRequest.
 pub struct MitmproxyFlowWrapper {
     url: String,
@@ -212,46 +214,40 @@ fn parse_flow(flow: &TNetValue) -> Result<MitmproxyFlowWrapper> {
     })
 }
 
-pub fn read_mitmproxy_file(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
-    let data = std::fs::read(path)?;
-    let mut cursor = std::io::Cursor::new(data);
-    let values = tnetstring::parse_all_lenient(&mut cursor);
+pub fn stream_mitmproxy_file(
+    path: &Path,
+) -> Result<impl Iterator<Item = Result<Box<dyn CapturedRequest>>>> {
+    let file = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::with_capacity(64 * 1024, file);
+    let display_path = path.display().to_string();
 
-    let mut requests: Vec<Box<dyn CapturedRequest>> = Vec::new();
-    let mut skipped = 0usize;
-    for value_result in values {
-        match value_result {
-            Ok(flow) => {
-                let flow_type = flow.get("type").and_then(value_to_string);
-                if flow_type.as_deref() != Some("http") {
-                    debug!(path = %path.display(), "Skipping non-HTTP flow");
-                    continue;
-                }
-                match parse_flow(&flow) {
-                    Ok(wrapper) => requests.push(Box::new(wrapper)),
-                    Err(e) => {
-                        warn!(path = %path.display(), error = %e, "Skipping corrupt flow");
-                        skipped += 1;
+    Ok(
+        tnetstring::TNetStringIter::new(reader).filter_map(
+            move |value_result| match value_result {
+                Ok(flow) => {
+                    let flow_type = flow.get("type").and_then(value_to_string);
+                    if flow_type.as_deref() != Some("http") {
+                        debug!(path = %display_path, "Skipping non-HTTP flow");
+                        return None;
+                    }
+                    match parse_flow(&flow) {
+                        Ok(wrapper) => Some(Ok(Box::new(wrapper) as Box<dyn CapturedRequest>)),
+                        Err(e) => {
+                            warn!(path = %display_path, error = %e, "Skipping corrupt flow");
+                            None
+                        }
                     }
                 }
-            }
-            Err(e) => {
-                warn!(path = %path.display(), error = %e, "Skipping unparseable flow entry");
-                skipped += 1;
-            }
-        }
-    }
-
-    if skipped > 0 {
-        warn!(path = %path.display(), skipped, total = requests.len() + skipped, "Some flows were skipped");
-    }
-    debug!(path = %path.display(), count = requests.len(), "Parsed mitmproxy flows");
-
-    Ok(requests)
+                Err(e) => {
+                    warn!(path = %display_path, error = %e, "Skipping unparseable flow entry");
+                    None
+                }
+            },
+        ),
+    )
 }
 
-pub fn read_mitmproxy_dir(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
-    let mut all = Vec::new();
+pub fn stream_mitmproxy_dir(path: &Path) -> Result<RequestIter> {
     let mut entries: Vec<_> = std::fs::read_dir(path)?
         .filter_map(|e| e.ok())
         .filter(|e| {
@@ -261,15 +257,28 @@ pub fn read_mitmproxy_dir(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> 
         })
         .collect();
     entries.sort_by_key(|e| e.path());
+
+    let mut iters: Vec<RequestIter> = Vec::new();
     for entry in entries {
-        match read_mitmproxy_file(&entry.path()) {
-            Ok(requests) => all.extend(requests),
+        match stream_mitmproxy_file(&entry.path()) {
+            Ok(iter) => iters.push(Box::new(iter)),
             Err(e) => {
                 warn!(path = %entry.path().display(), error = %e, "Skipping unreadable flow file");
             }
         }
     }
-    Ok(all)
+
+    Ok(Box::new(iters.into_iter().flatten()))
+}
+
+pub fn read_mitmproxy_file(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
+    Ok(stream_mitmproxy_file(path)?
+        .filter_map(|r| r.ok())
+        .collect())
+}
+
+pub fn read_mitmproxy_dir(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
+    Ok(stream_mitmproxy_dir(path)?.filter_map(|r| r.ok()).collect())
 }
 
 /// Heuristic: does this file look like a mitmproxy flow dump?
@@ -418,6 +427,75 @@ mod tests {
     fn heuristic_directory() {
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata");
         assert!(!mitmproxy_heuristic(&dir));
+    }
+
+    #[test]
+    fn stream_does_not_materialize_all() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct CountingReader<R> {
+            inner: R,
+            reads: Arc<AtomicUsize>,
+        }
+
+        impl<R: std::io::Read> std::io::Read for CountingReader<R> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.inner.read(buf)?;
+                if n > 0 {
+                    self.reads.fetch_add(1, Ordering::Relaxed);
+                }
+                Ok(n)
+            }
+        }
+
+        fn tnet_str(tag: u8, s: &str) -> String {
+            format!("{}:{}{}", s.len(), s, tag as char)
+        }
+        fn tnet_dict(pairs: &[(&str, &str)]) -> String {
+            let inner: String = pairs
+                .iter()
+                .map(|(k, v)| format!("{}{}", tnet_str(b';', k), v))
+                .collect();
+            format!("{}:{}}}", inner.len(), inner)
+        }
+
+        let flow_template = |i: u8| -> Vec<u8> {
+            let path_s = format!("/test{i}");
+            let path_val = tnet_str(b';', &path_s);
+            let req = tnet_dict(&[
+                ("method", &tnet_str(b';', "GET")),
+                ("scheme", &tnet_str(b';', "https")),
+                ("host", &tnet_str(b';', "api.example.com")),
+                ("port", &tnet_str(b'#', "443")),
+                ("path", &path_val),
+            ]);
+            let type_val = tnet_str(b';', "http");
+            tnet_dict(&[("type", &type_val), ("request", &req)]).into_bytes()
+        };
+
+        let mut data = Vec::new();
+        for i in 0..3u8 {
+            data.extend_from_slice(&flow_template(i));
+        }
+
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counting = CountingReader {
+            inner: std::io::Cursor::new(data),
+            reads: reads.clone(),
+        };
+
+        let iter = crate::tnetstring::TNetStringIter::new(counting);
+        let mut yielded = 0;
+        for item in iter {
+            assert!(item.is_ok(), "parse failed: {:?}", item.err());
+            yielded += 1;
+            if yielded == 1 {
+                let r = reads.load(Ordering::Relaxed);
+                assert!(r > 0, "should have done at least 1 read");
+            }
+        }
+        assert_eq!(yielded, 3, "should yield exactly 3 flows");
     }
 
     #[test]
