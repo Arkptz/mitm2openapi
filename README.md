@@ -104,6 +104,7 @@ mitm2openapi discover [OPTIONS] -i <INPUT> -o <OUTPUT> -p <PREFIX>
 | `--include-patterns <GLOBS>` | Comma-separated globs; matching paths are emitted without `ignore:` (auto-activated for `generate`) |
 | `--max-input-size <BYTES>` | Maximum input file size (default: `2GiB`). Accepts suffixes: `KiB`, `MiB`, `GiB` |
 | `--allow-symlinks` | Allow symlinked input files (default: rejected for safety) |
+| `--report <PATH>` | Write a structured JSON processing report to the given path |
 
 ### `generate`
 
@@ -134,6 +135,7 @@ mitm2openapi generate [OPTIONS] -i <INPUT> -t <TEMPLATES> -o <OUTPUT> -p <PREFIX
 | `--max-depth <N>` | Maximum tnetstring nesting depth (default: `256`) |
 | `--max-body-size <BYTES>` | Maximum request/response body size (default: `64MiB`) |
 | `--allow-symlinks` | Allow symlinked input files (default: rejected for safety) |
+| `--report <PATH>` | Write a structured JSON processing report to the given path |
 
 </details>
 
@@ -172,6 +174,42 @@ Increase `--max-input-size` if you work with captures larger than 2 GiB (e.g.
 
 Both mitmproxy flow files and HAR files are processed incrementally — memory usage
 stays bounded regardless of input size.
+
+## Diagnostics
+
+When the tnetstring parser encounters corruption in a mitmproxy flow file, it
+halts and emits a warn-level log with the byte offset, number of successfully
+parsed entries, and an error classification. No resync is attempted — binary
+payloads can contain bytes that mimic valid tnetstring length prefixes, so
+scanning forward would produce phantom flows.
+
+### Structured report (`--report`)
+
+Pass `--report <PATH>` to either `discover` or `generate` to write a JSON
+processing summary. This is useful for CI pipelines that need structured data
+instead of log scraping.
+
+```json
+{
+  "report_version": 1,
+  "tool_version": "0.2.3",
+  "input": {
+    "path": "capture.flow",
+    "format": "Auto",
+    "size_bytes": 102400
+  },
+  "result": {
+    "flows_read": 150,
+    "flows_emitted": 148,
+    "paths_in_spec": 12
+  },
+  "events": {
+    "parse_error": {
+      "TNetString parse error at byte 98304: unexpected end of input": 1
+    }
+  }
+}
+```
 
 ## Supported Formats
 
