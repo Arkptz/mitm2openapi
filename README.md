@@ -153,15 +153,15 @@ enforces several configurable limits:
 Increase `--max-input-size` if you work with captures larger than 2 GiB (e.g.
 `--max-input-size 8GiB`). The other limits rarely need tuning.
 
-Mitmproxy flow files are now processed incrementally — memory usage stays bounded
-regardless of input size. HAR files are still loaded in full (streaming HAR is planned).
+Both mitmproxy flow files and HAR files are processed incrementally — memory usage
+stays bounded regardless of input size.
 
 ## Supported Formats
 
 | Format | Versions | Extension |
 |--------|----------|-----------|
 | mitmproxy flow dumps | v19, v20, v21 | `.flow` |
-| HAR (HTTP Archive) | 1.2 | `.har` |
+| HAR (HTTP Archive) | 1.2 (incrementally parsed) | `.har` |
 
 Format is auto-detected from file content. Use `--format` to override.
 
