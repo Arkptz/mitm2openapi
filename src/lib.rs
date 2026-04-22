@@ -27,3 +27,45 @@ pub mod path_matching;
 pub mod schema;
 pub mod tnetstring;
 pub mod types;
+
+/// Maximum size of a single input file (2 GiB).
+pub const MAX_INPUT_SIZE: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Maximum size of a single TNetString payload (256 MiB).
+pub const MAX_PAYLOAD_SIZE: usize = 256 * 1024 * 1024;
+
+/// Maximum recursion depth for TNetString parsing.
+pub const MAX_DEPTH: usize = 256;
+
+/// Maximum recursion depth for JSON-to-schema conversion.
+pub const MAX_SCHEMA_DEPTH: usize = 64;
+
+/// Maximum body size for response/request bodies (64 MiB).
+pub const MAX_BODY_SIZE: usize = 64 * 1024 * 1024;
+
+/// Validate that an input path is a regular file (not a symlink, FIFO, etc.)
+/// and within the configured size limit.
+pub fn validate_input_path(
+    path: &std::path::Path,
+    max_size: u64,
+    allow_symlinks: bool,
+) -> Result<(), error::Error> {
+    if !allow_symlinks && path.symlink_metadata()?.file_type().is_symlink() {
+        return Err(error::Error::SymlinkRejected {
+            path: path.to_path_buf(),
+        });
+    }
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Err(error::Error::NotRegularFile {
+            path: path.to_path_buf(),
+        });
+    }
+    if meta.len() > max_size {
+        return Err(error::Error::InputTooLarge {
+            size: meta.len(),
+            max: max_size,
+        });
+    }
+    Ok(())
+}

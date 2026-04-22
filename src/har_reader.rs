@@ -166,10 +166,17 @@ pub fn har_heuristic(path: &Path) -> bool {
     if path.is_dir() {
         return false;
     }
-    let Ok(bytes) = std::fs::read(path) else {
+    let Ok(file) = std::fs::File::open(path) else {
         return false;
     };
-    let clean = strip_bom(&bytes);
+    use std::io::Read;
+    let mut buf = [0u8; 4096];
+    let mut reader = std::io::BufReader::new(file);
+    let n = match reader.read(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let clean = strip_bom(&buf[..n]);
     clean
         .iter()
         .find(|b| !b.is_ascii_whitespace())

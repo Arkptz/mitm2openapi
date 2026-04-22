@@ -8,6 +8,12 @@ use std::collections::HashSet;
 ///
 /// Escapes special regex chars in literal parts, then inserts named capture groups
 /// for `{param}` placeholders. The resulting regex is anchored with `^` and `$`.
+fn is_valid_param_ident(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+}
+
 pub fn path_to_regex(template: &str) -> Result<Regex, crate::error::Error> {
     let mut pattern = String::from("^");
     let mut remaining = template;
@@ -18,6 +24,11 @@ pub fn path_to_regex(template: &str) -> Result<Regex, crate::error::Error> {
 
         if let Some(close) = remaining.find('}') {
             let param_name = &remaining[..close];
+            if !is_valid_param_ident(param_name) {
+                return Err(crate::error::Error::InvalidParamIdent {
+                    name: param_name.to_string(),
+                });
+            }
             pattern.push_str(&format!("(?P<{}>[^/]+)", param_name));
             remaining = &remaining[close + 1..];
         } else {
@@ -332,6 +343,24 @@ mod tests {
     }
 
     // ── path_to_regex edge cases ───────────────────────────────────
+
+    #[test]
+    fn invalid_param_ident_rejected() {
+        let err = path_to_regex("/users/{foo bar}");
+        assert!(
+            matches!(err, Err(crate::error::Error::InvalidParamIdent { .. })),
+            "expected InvalidParamIdent, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn digit_leading_param_rejected() {
+        let err = path_to_regex("/users/{1abc}");
+        assert!(matches!(
+            err,
+            Err(crate::error::Error::InvalidParamIdent { .. })
+        ));
+    }
 
     #[test]
     fn root_path() {

@@ -35,6 +35,16 @@ fn is_uuid(s: &str) -> bool {
 ///
 /// Matches Python mitmproxy2swagger `value_to_schema` behavior exactly.
 pub fn value_to_schema(value: &serde_json::Value) -> Schema {
+    value_to_schema_depth(value, 0)
+}
+
+fn value_to_schema_depth(value: &serde_json::Value, depth: usize) -> Schema {
+    if depth >= crate::MAX_SCHEMA_DEPTH {
+        return Schema {
+            schema_data: SchemaData::default(),
+            schema_kind: SchemaKind::Any(AnySchema::default()),
+        };
+    }
     match value {
         serde_json::Value::Null => Schema {
             schema_data: SchemaData {
@@ -75,7 +85,10 @@ pub fn value_to_schema(value: &serde_json::Value) -> Schema {
                     schema_kind: SchemaKind::Any(AnySchema::default()),
                 })))
             } else {
-                Some(ReferenceOr::Item(Box::new(value_to_schema(&arr[0]))))
+                Some(ReferenceOr::Item(Box::new(value_to_schema_depth(
+                    &arr[0],
+                    depth + 1,
+                ))))
             };
             Schema {
                 schema_data: SchemaData::default(),
@@ -100,7 +113,7 @@ pub fn value_to_schema(value: &serde_json::Value) -> Schema {
                     schema_data: SchemaData::default(),
                     schema_kind: SchemaKind::Type(Type::Object(ObjectType {
                         additional_properties: Some(AdditionalProperties::Schema(Box::new(
-                            ReferenceOr::Item(value_to_schema(first_value)),
+                            ReferenceOr::Item(value_to_schema_depth(first_value, depth + 1)),
                         ))),
                         ..ObjectType::default()
                     })),
@@ -111,7 +124,7 @@ pub fn value_to_schema(value: &serde_json::Value) -> Schema {
                     .map(|(key, val)| {
                         (
                             key.clone(),
-                            ReferenceOr::Item(Box::new(value_to_schema(val))),
+                            ReferenceOr::Item(Box::new(value_to_schema_depth(val, depth + 1))),
                         )
                     })
                     .collect();
@@ -456,6 +469,33 @@ mod tests {
         assert!(is_uuid("550e8400-e29b-41d4-a716-446655440000"));
         assert!(is_uuid("00000000-0000-0000-0000-000000000000"));
         assert!(is_uuid("ABCDEF01-2345-6789-abcd-ef0123456789"));
+    }
+
+    #[test]
+    fn deeply_nested_json_caps_at_any_schema() {
+        let mut val = json!(null);
+        for _ in 0..80 {
+            val = json!({ "nested": val });
+        }
+        let schema = value_to_schema(&val);
+
+        fn find_any(s: &Schema, depth: usize) -> Option<usize> {
+            if matches!(s.schema_kind, SchemaKind::Any(_)) {
+                return Some(depth);
+            }
+            if let SchemaKind::Type(Type::Object(obj)) = &s.schema_kind {
+                for prop in obj.properties.values() {
+                    if let ReferenceOr::Item(inner) = prop {
+                        if let Some(d) = find_any(inner, depth + 1) {
+                            return Some(d);
+                        }
+                    }
+                }
+            }
+            None
+        }
+        let any_depth = find_any(&schema, 0).expect("should have AnySchema at depth limit");
+        assert_eq!(any_depth, crate::MAX_SCHEMA_DEPTH);
     }
 
     #[test]
