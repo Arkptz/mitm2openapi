@@ -169,11 +169,19 @@ fn extract_tag(
 fn parse_tags_overrides(
     json_str: &Option<String>,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
-    json_str.as_ref().and_then(|s| {
-        serde_json::from_str::<serde_json::Value>(s)
-            .ok()
-            .and_then(|v| v.as_object().cloned())
-    })
+    let raw = json_str.as_ref()?;
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(v) => v.as_object().cloned(),
+        Err(err) => {
+            warn!(
+                event = "invalid_tags_overrides",
+                input = %raw,
+                error = %err,
+                "ignoring malformed --tags-overrides JSON"
+            );
+            None
+        }
+    }
 }
 
 fn is_image_content_type(ct: Option<&str>) -> bool {
@@ -577,6 +585,7 @@ impl OpenApiBuilder {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

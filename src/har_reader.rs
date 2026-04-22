@@ -141,7 +141,7 @@ fn cap_body(body: Vec<u8>) -> Vec<u8> {
             truncated_to = MAX_BODY_SIZE,
             "truncating oversized body"
         );
-        body[..MAX_BODY_SIZE].to_vec()
+        body.get(..MAX_BODY_SIZE).unwrap_or(&body).to_vec()
     } else {
         body
     }
@@ -255,6 +255,7 @@ fn find_entries_array_start(reader: &mut impl Read) -> Result<()> {
             in_string = !in_string;
         }
 
+        #[allow(clippy::indexing_slicing)] // match_pos is bounded by target.len()
         if byte == target[match_pos] {
             match_pos += 1;
             if match_pos == target.len() {
@@ -270,7 +271,7 @@ fn find_entries_array_start(reader: &mut impl Read) -> Result<()> {
                 }
                 match_pos = 0;
             }
-        } else if byte == target[0] {
+        } else if byte == target.first().copied().unwrap_or(0) {
             match_pos = 1;
         } else {
             match_pos = 0;
@@ -432,7 +433,17 @@ pub fn stream_har_file(path: &Path) -> Result<RequestIter> {
 
 fn stream_har_dir(path: &Path) -> Result<RequestIter> {
     let mut dir_entries: Vec<_> = std::fs::read_dir(path)?
-        .filter_map(|e| e.ok())
+        .filter_map(|e| match e {
+            Ok(entry) => Some(entry),
+            Err(err) => {
+                warn!(
+                    event = "har_entry_skipped",
+                    error = %err,
+                    "skipping unreadable HAR directory entry"
+                );
+                None
+            }
+        })
         .filter(|e| {
             e.path()
                 .extension()
@@ -475,10 +486,11 @@ pub fn har_heuristic(path: &Path) -> bool {
         Ok(n) => n,
         Err(_) => return false,
     };
-    let clean = if buf[..n].starts_with(&[0xEF, 0xBB, 0xBF]) {
-        &buf[3..n]
+    let data = buf.get(..n).unwrap_or(&buf);
+    let clean = if data.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        data.get(3..).unwrap_or_default()
     } else {
-        &buf[..n]
+        data
     };
     clean
         .iter()
@@ -487,6 +499,7 @@ pub fn har_heuristic(path: &Path) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
