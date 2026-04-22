@@ -27,3 +27,18 @@ pub mod path_matching;
 pub mod schema;
 pub mod tnetstring;
 pub mod types;
+
+/// Maximum size of a single input file (2 GiB).
+pub const MAX_INPUT_SIZE: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Maximum size of a single TNetString payload (256 MiB).
+pub const MAX_PAYLOAD_SIZE: usize = 256 * 1024 * 1024;
+
+/// Maximum recursion depth for TNetString parsing.
+pub const MAX_DEPTH: usize = 256;
+
+/// Maximum recursion depth for JSON-to-schema conversion.
+pub const MAX_SCHEMA_DEPTH: usize = 64;
+
+/// Maximum body size for response/request bodies (64 MiB).
+pub const MAX_BODY_SIZE: usize = 64 * 1024 * 1024;
