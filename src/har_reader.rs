@@ -8,6 +8,7 @@ use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
 use crate::types::CapturedRequest;
+use crate::MAX_BODY_SIZE;
 
 #[derive(Deserialize)]
 struct StreamingHarEntry {
@@ -63,7 +64,7 @@ pub struct HarFlowWrapper {
     method: String,
     request_headers: Vec<(String, String)>,
     request_body: Option<Vec<u8>>,
-    response_status: u16,
+    response_status: Option<u16>,
     response_reason: String,
     response_headers: Vec<(String, String)>,
     response_body: Option<Vec<u8>>,
@@ -71,17 +72,44 @@ pub struct HarFlowWrapper {
 }
 
 impl HarFlowWrapper {
-    fn from_streaming_entry(entry: StreamingHarEntry) -> Self {
+    fn from_streaming_entry(entry: StreamingHarEntry) -> Option<Self> {
+        let scheme = entry
+            .request
+            .url
+            .split("://")
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+        if scheme != "http" && scheme != "https" {
+            warn!(event = "scheme_rejected", scheme = %scheme, url = %entry.request.url, "skipping HAR entry with non-http scheme");
+            return None;
+        }
+
         let request_body = entry
             .request
             .post_data
             .and_then(|pd| pd.text)
-            .map(String::into_bytes);
+            .map(|t| cap_body(t.into_bytes()));
 
         let response_content_type = entry.response.content.mime_type.clone();
         let response_body = decode_streaming_body(&entry.response.content);
 
-        Self {
+        let response_status = match u16::try_from(entry.response.status)
+            .ok()
+            .filter(|s| (100..=599).contains(s))
+        {
+            Some(s) => Some(s),
+            None => {
+                warn!(
+                    event = "status_out_of_range",
+                    value = entry.response.status,
+                    "dropping response status with invalid code"
+                );
+                None
+            }
+        };
+
+        Some(Self {
             url: entry.request.url,
             method: entry.request.method,
             request_headers: entry
@@ -91,7 +119,7 @@ impl HarFlowWrapper {
                 .map(|h| (h.name, h.value))
                 .collect(),
             request_body,
-            response_status: entry.response.status as u16,
+            response_status,
             response_reason: entry.response.status_text,
             response_headers: entry
                 .response
@@ -101,16 +129,37 @@ impl HarFlowWrapper {
                 .collect(),
             response_body,
             response_content_type,
-        }
+        })
+    }
+}
+
+fn cap_body(body: Vec<u8>) -> Vec<u8> {
+    if body.len() > MAX_BODY_SIZE {
+        warn!(
+            event = "body_truncated",
+            original_size = body.len(),
+            truncated_to = MAX_BODY_SIZE,
+            "truncating oversized body"
+        );
+        body[..MAX_BODY_SIZE].to_vec()
+    } else {
+        body
     }
 }
 
 fn decode_streaming_body(content: &StreamingHarContent) -> Option<Vec<u8>> {
     let text = content.text.as_deref()?;
     if content.encoding.as_deref() == Some("base64") {
-        base64::engine::general_purpose::STANDARD.decode(text).ok()
+        match base64::engine::general_purpose::STANDARD.decode(text) {
+            Ok(decoded) => Some(cap_body(decoded)),
+            Err(e) => {
+                warn!(event = "base64_decode_failed", error = %e, "base64 body decode failed, dropping body");
+                None
+            }
+        }
     } else {
-        Some(text.as_bytes().to_vec())
+        let body = text.as_bytes().to_vec();
+        Some(cap_body(body))
     }
 }
 
@@ -132,7 +181,7 @@ impl CapturedRequest for HarFlowWrapper {
     }
 
     fn get_response_status_code(&self) -> Option<u16> {
-        Some(self.response_status)
+        self.response_status
     }
 
     fn get_response_reason(&self) -> Option<&str> {
@@ -352,10 +401,10 @@ impl Iterator for HarStreamIter {
                 let idx = self.entry_index;
                 self.entry_index += 1;
                 match serde_json::from_slice::<StreamingHarEntry>(&buf) {
-                    Ok(entry) => {
-                        let wrapper = HarFlowWrapper::from_streaming_entry(entry);
-                        Some(Ok(Box::new(wrapper) as Box<dyn CapturedRequest>))
-                    }
+                    Ok(entry) => match HarFlowWrapper::from_streaming_entry(entry) {
+                        Some(wrapper) => Some(Ok(Box::new(wrapper) as Box<dyn CapturedRequest>)),
+                        None => self.next(),
+                    },
                     Err(e) => {
                         warn!(entry = idx, error = %e, "Failed to parse HAR entry");
                         Some(Err(Error::HarParse(format!("entry {idx}: {e}"))))
@@ -687,5 +736,74 @@ mod tests {
 
         let results: Vec<_> = stream_har_file(tmp.path()).unwrap().collect();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn base64_decode_error_reported() {
+        use std::io::Write;
+
+        let har = r#"{"log":{"version":"1.2","entries":[
+            {"request":{"method":"GET","url":"https://example.com/api","headers":[]},
+             "response":{"status":200,"statusText":"OK","headers":[],"content":{"text":"Zm9vYg","encoding":"base64","mimeType":"application/octet-stream"}}}
+        ]}}"#;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.as_file().write_all(har.as_bytes()).unwrap();
+        tmp.as_file().sync_all().unwrap();
+
+        let results: Vec<_> = stream_har_file(tmp.path())
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert!(
+            results[0].get_response_body().is_none(),
+            "invalid base64 body should be None"
+        );
+    }
+
+    #[test]
+    fn har_scheme_whitelist() {
+        use std::io::Write;
+
+        let har = r#"{"log":{"version":"1.2","entries":[
+            {"request":{"method":"GET","url":"javascript:alert(1)","headers":[]},
+             "response":{"status":200,"statusText":"OK","headers":[],"content":{}}},
+            {"request":{"method":"GET","url":"https://example.com/api","headers":[]},
+             "response":{"status":200,"statusText":"OK","headers":[],"content":{}}}
+        ]}}"#;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.as_file().write_all(har.as_bytes()).unwrap();
+        tmp.as_file().sync_all().unwrap();
+
+        let results: Vec<_> = stream_har_file(tmp.path())
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(results.len(), 1, "javascript: scheme should be skipped");
+        assert_eq!(results[0].get_url(), "https://example.com/api");
+    }
+
+    #[test]
+    fn har_status_out_of_range() {
+        use std::io::Write;
+
+        let har = r#"{"log":{"version":"1.2","entries":[
+            {"request":{"method":"GET","url":"https://example.com/api","headers":[]},
+             "response":{"status":70152,"statusText":"Bogus","headers":[],"content":{}}}
+        ]}}"#;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.as_file().write_all(har.as_bytes()).unwrap();
+        tmp.as_file().sync_all().unwrap();
+
+        let results: Vec<_> = stream_har_file(tmp.path())
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].get_response_status_code(),
+            None,
+            "status 70152 should be rejected"
+        );
     }
 }
