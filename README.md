@@ -104,6 +104,7 @@ mitm2openapi discover [OPTIONS] -i <INPUT> -o <OUTPUT> -p <PREFIX>
 | `--include-patterns <GLOBS>` | Comma-separated globs; matching paths are emitted without `ignore:` (auto-activated for `generate`) |
 | `--max-input-size <BYTES>` | Maximum input file size (default: `2GiB`). Accepts suffixes: `KiB`, `MiB`, `GiB` |
 | `--allow-symlinks` | Allow symlinked input files (default: rejected for safety) |
+| `--strict` | Treat warnings as errors; exit code 2 if any cap fires, flow is rejected, or parse error occurs |
 | `--report <PATH>` | Write a structured JSON processing report to the given path |
 
 ### `generate`
@@ -134,6 +135,7 @@ mitm2openapi generate [OPTIONS] -i <INPUT> -t <TEMPLATES> -o <OUTPUT> -p <PREFIX
 | `--max-depth <N>` | Maximum tnetstring nesting depth (default: `256`) |
 | `--max-body-size <BYTES>` | Maximum request/response body size (default: `64MiB`) |
 | `--allow-symlinks` | Allow symlinked input files (default: rejected for safety) |
+| `--strict` | Treat warnings as errors; exit code 2 if any cap fires, flow is rejected, or parse error occurs |
 | `--report <PATH>` | Write a structured JSON processing report to the given path |
 
 </details>
@@ -210,6 +212,22 @@ instead of log scraping.
 }
 ```
 
+### Strict mode
+
+Pass `--strict` to either `discover` or `generate` to treat any warning-level
+event as a hard failure. The process exits with code 2 if any resource cap
+fired, a flow was rejected, or a parse error was encountered.
+
+This is designed for CI gates where silent degradation is unacceptable:
+
+```bash
+mitm2openapi discover -i capture.flow -o templates.yaml -p https://api.example.com --strict \
+  || echo "FAIL: corrupt or over-limit flows detected"
+```
+
+Without `--strict`, the same conditions are logged at warn level and processing
+continues (exit code 0).
+
 ## Supported Formats
 
 | Format | Versions | Extension |
@@ -235,6 +253,13 @@ Format is auto-detected from file content. Use `--format` to override.
 - **Templates file**: Discovered endpoints are prefixed with `ignore:`. Remove the prefix to include an endpoint. This replaces editing the output spec directly.
 - **No Python dependency**: Ships as a single static binary for Linux, macOS, and Windows.
 - **HAR support**: Process HAR exports from browser DevTools or other HTTP tools.
+
+## Benchmarks
+
+A [GitHub Actions workflow](.github/workflows/bench.yml) runs `hyperfine`
+against the release binary on every push to `main`. Results are uploaded as
+build artifacts for manual inspection. No automated regression gate is enforced
+yet — the artifacts provide a historical record for eyeballing trends.
 
 ## Contributing
 
