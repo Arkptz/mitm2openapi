@@ -9,31 +9,124 @@ use openapiv3::{
     ReferenceOr, Schema, SchemaData, SchemaKind, StringType, Type,
 };
 
-/// Check if a string looks like a numeric value (all digits, possibly with leading minus).
-fn is_numeric_string(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
+use crate::type_hints::{is_numeric_string, is_uuid};
+
+/// Maximum number of array elements sampled for schema union.
+const ARRAY_SAMPLE_LIMIT: usize = 3;
+
+/// Minimum number of dynamic keys required before classifying an object as a dictionary
+/// with `additionalProperties` (rather than a fixed-key object).
+const MIN_DICT_KEYS: usize = 3;
+
+/// Classify the `SchemaKind` discriminant for deduplication.
+fn schema_discriminant(schema: &Schema) -> u8 {
+    match &schema.schema_kind {
+        SchemaKind::Type(Type::Boolean(_)) => 0,
+        SchemaKind::Type(Type::Integer(_)) => 1,
+        SchemaKind::Type(Type::Number(_)) => 2,
+        SchemaKind::Type(Type::String(_)) => 3,
+        SchemaKind::Type(Type::Array(_)) => 4,
+        SchemaKind::Type(Type::Object(_)) => 5,
+        SchemaKind::Any(_) => 6,
+        _ => 7,
     }
-    let s = s.strip_prefix('-').unwrap_or(s);
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
 }
 
-/// Check if a string looks like a UUID (8-4-4-4-12 hex pattern).
-fn is_uuid(s: &str) -> bool {
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 5 {
+/// Sample up to `ARRAY_SAMPLE_LIMIT` elements and union their schemas.
+/// Returns a single schema if all sampled elements produce the same type,
+/// otherwise wraps them in `oneOf`.
+fn union_array_elements(arr: &[serde_json::Value], depth: usize) -> Schema {
+    let sample_count = arr.len().min(ARRAY_SAMPLE_LIMIT);
+    let mut schemas: Vec<Schema> = Vec::with_capacity(sample_count);
+    let mut seen: Vec<u8> = Vec::with_capacity(sample_count);
+
+    for elem in arr.iter().take(sample_count) {
+        let s = value_to_schema_depth(elem, depth);
+        let disc = schema_discriminant(&s);
+        if !seen.contains(&disc) {
+            seen.push(disc);
+            schemas.push(s);
+        }
+    }
+
+    if schemas.len() == 1 {
+        schemas.remove(0)
+    } else {
+        Schema {
+            schema_data: SchemaData::default(),
+            schema_kind: SchemaKind::OneOf {
+                one_of: schemas.into_iter().map(ReferenceOr::Item).collect(),
+            },
+        }
+    }
+}
+
+/// Union all map values into a single schema (for dict-style objects).
+fn union_map_values(map: &serde_json::Map<String, serde_json::Value>, depth: usize) -> Schema {
+    let sample_count = map.len().min(ARRAY_SAMPLE_LIMIT);
+    let mut schemas: Vec<Schema> = Vec::with_capacity(sample_count);
+    let mut seen: Vec<u8> = Vec::with_capacity(sample_count);
+
+    for val in map.values().take(sample_count) {
+        let s = value_to_schema_depth(val, depth + 1);
+        let disc = schema_discriminant(&s);
+        if !seen.contains(&disc) {
+            seen.push(disc);
+            schemas.push(s);
+        }
+    }
+
+    if schemas.len() == 1 {
+        schemas.remove(0)
+    } else {
+        Schema {
+            schema_data: SchemaData::default(),
+            schema_kind: SchemaKind::OneOf {
+                one_of: schemas.into_iter().map(ReferenceOr::Item).collect(),
+            },
+        }
+    }
+}
+
+/// Determine whether a JSON object should be treated as a dict (dynamic keys +
+/// `additionalProperties`) vs a regular object with known property names.
+///
+/// Requires that ALL keys are numeric or ALL keys are UUIDs, AND either there are
+/// at least `MIN_DICT_KEYS` entries or the values have mixed types (suggesting the
+/// keys aren't simply enumerated constants like HTTP status codes).
+fn looks_like_dict(map: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let all_dynamic = map.keys().all(|k| is_numeric_string(k)) || map.keys().all(|k| is_uuid(k));
+    if !all_dynamic {
         return false;
     }
-    let expected_lens = [8, 4, 4, 4, 12];
-    parts
-        .iter()
-        .zip(expected_lens.iter())
-        .all(|(part, &len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
+    if map.len() >= MIN_DICT_KEYS {
+        return true;
+    }
+    // Fewer than MIN_DICT_KEYS: only classify as dict if values have mixed types
+    let mut first_disc: Option<u8> = None;
+    for val in map.values() {
+        let disc = json_value_discriminant(val);
+        match first_disc {
+            None => first_disc = Some(disc),
+            Some(prev) if prev != disc => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn json_value_discriminant(val: &serde_json::Value) -> u8 {
+    match val {
+        serde_json::Value::Null => 0,
+        serde_json::Value::Bool(_) => 1,
+        serde_json::Value::Number(_) => 2,
+        serde_json::Value::String(_) => 3,
+        serde_json::Value::Array(_) => 4,
+        serde_json::Value::Object(_) => 5,
+    }
 }
 
 /// Convert a `serde_json::Value` into an `openapiv3::Schema`.
-///
-/// Matches Python mitmproxy2swagger `value_to_schema` behavior exactly.
 pub fn value_to_schema(value: &serde_json::Value) -> Schema {
     value_to_schema_depth(value, 0)
 }
@@ -85,8 +178,8 @@ fn value_to_schema_depth(value: &serde_json::Value, depth: usize) -> Schema {
                     schema_kind: SchemaKind::Any(AnySchema::default()),
                 })))
             } else {
-                Some(ReferenceOr::Item(Box::new(value_to_schema_depth(
-                    &arr[0],
+                Some(ReferenceOr::Item(Box::new(union_array_elements(
+                    arr,
                     depth + 1,
                 ))))
             };
@@ -107,13 +200,13 @@ fn value_to_schema_depth(value: &serde_json::Value, depth: usize) -> Schema {
                     schema_data: SchemaData::default(),
                     schema_kind: SchemaKind::Type(Type::Object(ObjectType::default())),
                 }
-            } else if map.keys().all(|k| is_numeric_string(k)) || map.keys().all(|k| is_uuid(k)) {
-                let first_value = map.values().next().unwrap();
+            } else if looks_like_dict(map) {
+                let value_schema = union_map_values(map, depth + 1);
                 Schema {
                     schema_data: SchemaData::default(),
                     schema_kind: SchemaKind::Type(Type::Object(ObjectType {
                         additional_properties: Some(AdditionalProperties::Schema(Box::new(
-                            ReferenceOr::Item(value_to_schema_depth(first_value, depth + 1)),
+                            ReferenceOr::Item(value_schema),
                         ))),
                         ..ObjectType::default()
                     })),
@@ -141,6 +234,7 @@ fn value_to_schema_depth(value: &serde_json::Value, depth: usize) -> Schema {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -272,17 +366,18 @@ mod tests {
     }
 
     #[test]
-    fn mixed_array_uses_first_element_only() {
+    fn mixed_array_produces_one_of() {
         let schema = value_to_schema(&json!([1, "a"]));
         assert_type(&schema, |t| match t {
             Type::Array(arr) => {
                 let items = arr.items.as_ref().unwrap();
                 match items {
                     ReferenceOr::Item(boxed) => {
-                        assert!(matches!(
-                            boxed.schema_kind,
-                            SchemaKind::Type(Type::Integer(_))
-                        ));
+                        assert!(
+                            matches!(boxed.schema_kind, SchemaKind::OneOf { .. }),
+                            "mixed array should produce oneOf, got {:?}",
+                            boxed.schema_kind
+                        );
                     }
                     _ => panic!("expected Item"),
                 }
@@ -328,8 +423,23 @@ mod tests {
     }
 
     #[test]
-    fn all_numeric_keys_produces_additional_properties() {
+    fn few_numeric_keys_same_type_treated_as_object() {
+        // Fewer than MIN_DICT_KEYS with same-type values → treated as fixed-key object
         let schema = value_to_schema(&json!({"1": "a", "2": "b"}));
+        assert_type(&schema, |t| match t {
+            Type::Object(obj) => {
+                assert_eq!(obj.properties.len(), 2);
+                assert!(obj.properties.contains_key("1"));
+                assert!(obj.properties.contains_key("2"));
+                assert!(obj.additional_properties.is_none());
+            }
+            _ => panic!("expected Object"),
+        });
+    }
+
+    #[test]
+    fn many_numeric_keys_produces_additional_properties() {
+        let schema = value_to_schema(&json!({"1": "a", "2": "b", "3": "c"}));
         assert_type(&schema, |t| match t {
             Type::Object(obj) => {
                 assert!(obj.properties.is_empty());
@@ -349,7 +459,11 @@ mod tests {
 
     #[test]
     fn all_uuid_keys_produces_additional_properties() {
-        let schema = value_to_schema(&json!({"550e8400-e29b-41d4-a716-446655440000": "val"}));
+        let schema = value_to_schema(&json!({
+            "550e8400-e29b-41d4-a716-446655440000": "val1",
+            "660e8400-e29b-41d4-a716-446655440001": "val2",
+            "770e8400-e29b-41d4-a716-446655440002": "val3"
+        }));
         assert_type(&schema, |t| match t {
             Type::Object(obj) => {
                 assert!(obj.properties.is_empty());
@@ -441,7 +555,8 @@ mod tests {
 
     #[test]
     fn numeric_keys_serializes_with_additional_properties() {
-        let schema = value_to_schema(&json!({"1": "a", "2": "b"}));
+        // Need 3+ keys to trigger dict classification
+        let schema = value_to_schema(&json!({"1": "a", "2": "b", "3": "c"}));
         let json = serde_json::to_value(&schema).unwrap();
         assert_eq!(json["type"], "object");
         assert_eq!(json["additionalProperties"]["type"], "string");
@@ -506,5 +621,45 @@ mod tests {
         assert!(!is_uuid("550e8400-e29b-41d4-a716-44665544000"));
         assert!(!is_uuid("550e8400-e29b-41d4-a716-4466554400000"));
         assert!(!is_uuid("ZZZZZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZZZZZZZZZ"));
+    }
+
+    #[test]
+    fn array_union_first_n_elements() {
+        let schema = value_to_schema(&json!([1, "two", 3]));
+        assert_type(&schema, |t| match t {
+            Type::Array(arr) => {
+                let items = arr.items.as_ref().unwrap();
+                match items {
+                    ReferenceOr::Item(boxed) => match &boxed.schema_kind {
+                        SchemaKind::OneOf { one_of } => {
+                            assert_eq!(one_of.len(), 2, "should have integer + string");
+                        }
+                        other => panic!("expected oneOf, got {:?}", other),
+                    },
+                    _ => panic!("expected Item"),
+                }
+            }
+            _ => panic!("expected Array"),
+        });
+    }
+
+    #[test]
+    fn status_keyed_object_not_dict() {
+        let schema = value_to_schema(&json!({
+            "200": {"description": "OK"},
+            "404": {"description": "Not Found"}
+        }));
+        assert_type(&schema, |t| match t {
+            Type::Object(obj) => {
+                assert_eq!(obj.properties.len(), 2);
+                assert!(obj.properties.contains_key("200"));
+                assert!(obj.properties.contains_key("404"));
+                assert!(
+                    obj.additional_properties.is_none(),
+                    "status-code keys should not trigger additionalProperties"
+                );
+            }
+            _ => panic!("expected Object"),
+        });
     }
 }
