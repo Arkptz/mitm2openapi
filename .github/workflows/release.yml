@@ -74,7 +74,7 @@ jobs:
           Compress-Archive -Path "target/${{ matrix.target }}/release/mitm2openapi.exe" -DestinationPath "mitm2openapi-${{ github.ref_name }}-${{ matrix.target }}.zip"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mitm2openapi-${{ matrix.target }}
           path: mitm2openapi-${{ github.ref_name }}-${{ matrix.target }}.*
