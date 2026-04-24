@@ -78,11 +78,14 @@ total file size. For typical captures, expect 5--15 MB of memory usage.
 
 ## When limits fire
 
-When a limit is exceeded:
+When a per-field limit is exceeded (header too large, body too large, form fields over cap),
+the affected field is skipped or truncated and processing continues with the remaining data.
 
-- A `warn`-level log message is emitted with details
-- The affected flow or field is skipped/truncated
-- Processing continues with the remaining data
+When a tnetstring parse error occurs, the iterator halts and the rest of the file is not
+processed — valid flows parsed before the error are still emitted. There is no resync
+because binary payloads can contain bytes that mimic valid length prefixes.
+
+In both cases a `warn`-level log message is emitted with details.
 
 Use [strict mode](./strict-mode.md) to treat these warnings as errors, or
 [processing reports](./reports.md) to capture them as structured data.
