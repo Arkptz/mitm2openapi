@@ -10,6 +10,9 @@ use crate::error::{Error, Result};
 use crate::types::CapturedRequest;
 use crate::MAX_BODY_SIZE;
 
+const MAX_HEADER_NAME_SIZE: usize = 8 * 1024;
+const MAX_HEADER_VALUE_SIZE: usize = 64 * 1024;
+
 #[derive(Deserialize)]
 struct StreamingHarEntry {
     request: StreamingHarRequest,
@@ -112,25 +115,48 @@ impl HarFlowWrapper {
         Some(Self {
             url: entry.request.url,
             method: entry.request.method,
-            request_headers: entry
-                .request
-                .headers
-                .into_iter()
-                .map(|h| (h.name, h.value))
-                .collect(),
+            request_headers: cap_headers(entry.request.headers),
             request_body,
             response_status,
             response_reason: entry.response.status_text,
-            response_headers: entry
-                .response
-                .headers
-                .into_iter()
-                .map(|h| (h.name, h.value))
-                .collect(),
+            response_headers: cap_headers(entry.response.headers),
             response_body,
             response_content_type,
         })
     }
+}
+
+fn cap_headers(headers: Vec<StreamingHarHeader>) -> Vec<(String, String)> {
+    headers
+        .into_iter()
+        .filter_map(|h| {
+            if h.name.len() > MAX_HEADER_NAME_SIZE {
+                warn!(
+                    event = "header_name_too_large",
+                    size = h.name.len(),
+                    max = MAX_HEADER_NAME_SIZE,
+                    "dropping HAR header with oversized name"
+                );
+                return None;
+            }
+            let value = if h.value.len() > MAX_HEADER_VALUE_SIZE {
+                warn!(
+                    event = "header_value_too_large",
+                    size = h.value.len(),
+                    max = MAX_HEADER_VALUE_SIZE,
+                    name = %h.name,
+                    "truncating oversized HAR header value"
+                );
+                h.value
+                    .get(..MAX_HEADER_VALUE_SIZE)
+                    .unwrap_or(&h.value)
+                    .to_string()
+            } else {
+                h.value
+            };
+            Some((h.name, value))
+        })
+        .collect()
 }
 
 fn cap_body(body: Vec<u8>) -> Vec<u8> {
