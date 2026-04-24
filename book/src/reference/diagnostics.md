@@ -90,7 +90,7 @@ See [processing reports](../usage/reports.md) for the full JSON schema.
 |----------|---------|
 | `parse_error` | Tnetstring corruption, HAR JSON syntax errors |
 | `cap_fired` | Body too large, depth exceeded, form field count exceeded |
-| `flow_rejected` | Invalid scheme, non-UTF-8 identity fields, bad port/status |
+| `rejected` | Invalid scheme, non-UTF-8 identity fields, bad port/status |
 
 ### Using reports in CI
 
