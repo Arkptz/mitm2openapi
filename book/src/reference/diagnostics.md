@@ -29,7 +29,8 @@ WARN TNetString parse error at byte 98304: unexpected end of input (148 flows pa
 ```
 
 This means the mitmproxy flow file contains corrupt data starting at byte 98,304. The
-parser halted and all 148 flows parsed before the corruption are still processed.
+parser halts immediately and the remaining bytes in the file are **not** processed. The
+148 flows parsed before the corruption are still emitted.
 
 **No resync is attempted.** Binary payloads can contain bytes that mimic valid tnetstring
 length prefixes, so scanning forward would produce phantom flows with fabricated data.
