@@ -1,3 +1,26 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.5.2](https://github.com/Arkptz/mitm2openapi/compare/v0.5.1...v0.5.2) - 2026-04-24
+
+### Fixed
+
+- *(har)* apply header size caps consistent with mitmproxy reader
+- *(reader)* reject symlinked directory inputs and entries
+
+### Other
+
+- *(security)* cover symlink directory and entry rejection
+- *(readme)* trim content migrated to book, add docs badge
+- *(book)* add mdBook scaffold with book.toml and all chapter content
+- adjust CHANGELOG/CONTRIBUTING headings for mdBook inclusion
+- regenerate demo.gif [skip ci]
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
