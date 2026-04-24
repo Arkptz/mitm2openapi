@@ -9,8 +9,8 @@ Binaries are available for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and
 Windows (x86_64).
 
 ```bash
-# Example: Linux x86_64
-curl -L https://github.com/Arkptz/mitm2openapi/releases/latest/download/mitm2openapi-x86_64-unknown-linux-gnu.tar.gz \
+# Example: Linux x86_64 — replace <VERSION> with the release tag (e.g. v0.5.1)
+curl -L "https://github.com/Arkptz/mitm2openapi/releases/download/<VERSION>/mitm2openapi-<VERSION>-x86_64-unknown-linux-gnu.tar.gz" \
   | tar xz
 sudo mv mitm2openapi /usr/local/bin/
 ```
