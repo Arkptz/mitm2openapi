@@ -26,6 +26,7 @@ and writes a templates file listing all observed URL paths.
 Open `templates.yaml`. Each path is prefixed with `ignore:` by default:
 
 ```yaml
+x-path-templates:
 - ignore:/api/users
 - ignore:/api/users/{id}
 - ignore:/api/products
@@ -35,6 +36,7 @@ Open `templates.yaml`. Each path is prefixed with `ignore:` by default:
 Remove the `ignore:` prefix from paths you want in the final spec:
 
 ```yaml
+x-path-templates:
 - /api/users
 - /api/users/{id}
 - /api/products

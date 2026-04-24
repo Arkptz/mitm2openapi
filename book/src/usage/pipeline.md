@@ -37,14 +37,15 @@ mitm2openapi discover \
 2. Each request's URL is checked against the `--prefix` filter
 3. Matching paths are collected and deduplicated
 4. Path segments that look like IDs (UUIDs, numeric strings) are replaced with
-   `{parameter}` placeholders
+   `{id}` placeholders (or `{id1}`, `{id2}`, ... when a path has multiple parameters)
 5. The result is written to the templates file
 
 ### Templates file format
 
-The output is a YAML list of URL path templates:
+The output is a YAML file with path templates under an `x-path-templates` key:
 
 ```yaml
+x-path-templates:
 - ignore:/api/users
 - ignore:/api/users/{id}
 - ignore:/api/products
@@ -78,11 +79,13 @@ Open the templates file in any text editor. For each path:
 
 ```yaml
 # Before curation
+x-path-templates:
 - ignore:/api/users
 - ignore:/api/users/{id}
 - ignore:/static/bundle.js
 
 # After curation
+x-path-templates:
 - /api/users
 - /api/users/{id}
 - ignore:/static/bundle.js
@@ -139,8 +142,9 @@ mitm2openapi generate \
    - Request body schema is inferred (JSON, form data)
    - Response status code and body schema are recorded
 5. When multiple requests match the same template, their schemas are merged:
-   - Different status codes (200, 400, 404) produce separate response entries
-   - Request body schemas are unioned across observations
+    - Different status codes (200, 400, 404) produce separate response entries
+    - Request body is taken from the first observation; subsequent same-endpoint
+      observations only contribute response schemas
 6. The final OpenAPI 3.0 document is written as YAML
 
 ### Customizing output
