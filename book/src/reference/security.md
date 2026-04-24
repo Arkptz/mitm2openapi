@@ -25,8 +25,10 @@ Before reading any content:
    directories are rejected unless `--allow-symlinks` is explicitly set.
 2. **File size** — files exceeding `--max-input-size` (default 2 GiB) are rejected before
    any bytes are read.
-3. **TOCTOU mitigation** — the file is opened first, then metadata is checked via the file
-   descriptor (not the path), preventing race conditions.
+3. **TOCTOU caveat** — file metadata is checked via the path before reading to reject
+   symlinks, non-regular files, and oversized inputs. There is a small TOCTOU window
+   between the metadata check and the file open; mitigation via fd-based recheck after
+   open is a future enhancement.
 
 ### Parser-level caps
 
