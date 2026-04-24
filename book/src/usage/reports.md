@@ -53,11 +53,15 @@ mitm2openapi discover \
 
 ### Event categories
 
-| Category | Meaning |
-|----------|---------|
-| `parse_error` | Corrupt data encountered (tnetstring errors, malformed HAR entries) |
-| `cap_fired` | A resource limit was triggered (body too large, depth exceeded) |
-| `flow_rejected` | A flow was skipped (invalid UTF-8, unsupported scheme, unknown method) |
+| Category | Meaning | Status |
+|----------|---------|--------|
+| `parse_error` | Corrupt data encountered (tnetstring errors, malformed HAR entries) | Populated |
+| `cap_fired` | A resource limit was triggered (body too large, depth exceeded) | Reserved — not yet populated at runtime |
+| `rejected` | A flow was skipped (invalid UTF-8, unsupported scheme, bad port/status) | Reserved — not yet populated at runtime |
+
+The `cap_fired` and `rejected` categories are present in the report schema and will be
+connected to the reader pipelines in a future release. Currently, only `parse_error`
+events are counted.
 
 ## CI integration
 
