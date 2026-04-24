@@ -274,16 +274,32 @@ fn stream_input(
     max_input_size: u64,
     allow_symlinks: bool,
 ) -> Result<RequestIter> {
+    // Check symlink-ness before is_dir(), since is_dir() follows symlinks.
+    if !allow_symlinks {
+        if let Ok(meta) = path.symlink_metadata() {
+            if meta.file_type().is_symlink() {
+                return Err(mitm2openapi::error::Error::SymlinkRejected {
+                    path: path.to_path_buf(),
+                }
+                .into());
+            }
+        }
+    }
     if !path.is_dir() {
         mitm2openapi::validate_input_path(path, max_input_size, allow_symlinks)
             .context("input file validation failed")?;
     }
+    let reject_symlinks = !allow_symlinks;
     match format {
         InputFormat::Mitmproxy => {
             debug!(path = %path.display(), "Streaming as mitmproxy format");
             if path.is_dir() {
-                mitmproxy_reader::stream_mitmproxy_dir(path)
-                    .context("failed to stream mitmproxy directory")
+                if reject_symlinks {
+                    mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(path)
+                } else {
+                    mitmproxy_reader::stream_mitmproxy_dir(path)
+                }
+                .context("failed to stream mitmproxy directory")
             } else {
                 let iter = mitmproxy_reader::stream_mitmproxy_file(path)
                     .context("failed to stream mitmproxy file")?;
@@ -298,8 +314,16 @@ fn stream_input(
         InputFormat::Auto => {
             if path.is_dir() {
                 debug!(path = %path.display(), "Auto-detecting format for directory");
-                let mitmproxy_result = mitmproxy_reader::stream_mitmproxy_dir(path);
-                let har_result = har_reader::stream_har_file(path);
+                let mitmproxy_result = if reject_symlinks {
+                    mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(path)
+                } else {
+                    mitmproxy_reader::stream_mitmproxy_dir(path)
+                };
+                let har_result = if reject_symlinks {
+                    har_reader::stream_har_dir_no_symlinks(path)
+                } else {
+                    har_reader::stream_har_file(path)
+                };
 
                 match (mitmproxy_result, har_result) {
                     (Ok(m_iter), Ok(h_iter)) => {

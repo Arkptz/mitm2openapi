@@ -361,6 +361,14 @@ pub fn stream_mitmproxy_file(
 }
 
 pub fn stream_mitmproxy_dir(path: &Path) -> Result<RequestIter> {
+    stream_mitmproxy_dir_inner(path, false)
+}
+
+pub fn stream_mitmproxy_dir_no_symlinks(path: &Path) -> Result<RequestIter> {
+    stream_mitmproxy_dir_inner(path, true)
+}
+
+fn stream_mitmproxy_dir_inner(path: &Path, reject_symlinks: bool) -> Result<RequestIter> {
     let mut entries: Vec<_> = std::fs::read_dir(path)?
         .filter_map(|e| match e {
             Ok(entry) => Some(entry),
@@ -377,6 +385,23 @@ pub fn stream_mitmproxy_dir(path: &Path) -> Result<RequestIter> {
             e.path()
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("flow"))
+        })
+        .filter(|e| {
+            if reject_symlinks {
+                match e.path().symlink_metadata() {
+                    Ok(meta) if meta.file_type().is_symlink() => {
+                        warn!(
+                            event = "symlink_rejected",
+                            path = %e.path().display(),
+                            "skipping symlinked directory entry"
+                        );
+                        false
+                    }
+                    _ => true,
+                }
+            } else {
+                true
+            }
         })
         .collect();
     entries.sort_by_key(|e| e.path());
