@@ -432,6 +432,14 @@ pub fn stream_har_file(path: &Path) -> Result<RequestIter> {
 }
 
 fn stream_har_dir(path: &Path) -> Result<RequestIter> {
+    stream_har_dir_inner(path, false)
+}
+
+pub fn stream_har_dir_no_symlinks(path: &Path) -> Result<RequestIter> {
+    stream_har_dir_inner(path, true)
+}
+
+fn stream_har_dir_inner(path: &Path, reject_symlinks: bool) -> Result<RequestIter> {
     let mut dir_entries: Vec<_> = std::fs::read_dir(path)?
         .filter_map(|e| match e {
             Ok(entry) => Some(entry),
@@ -448,6 +456,23 @@ fn stream_har_dir(path: &Path) -> Result<RequestIter> {
             e.path()
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("har"))
+        })
+        .filter(|e| {
+            if reject_symlinks {
+                match e.path().symlink_metadata() {
+                    Ok(meta) if meta.file_type().is_symlink() => {
+                        warn!(
+                            event = "symlink_rejected",
+                            path = %e.path().display(),
+                            "skipping symlinked HAR directory entry"
+                        );
+                        false
+                    }
+                    _ => true,
+                }
+            } else {
+                true
+            }
         })
         .collect();
     dir_entries.sort_by_key(|e| e.path());
