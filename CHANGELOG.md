@@ -28,6 +28,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2](https://github.com/Arkptz/mitm2openapi/compare/v0.5.1...v0.5.2) - 2026-04-24
+
+### Fixed
+
+- *(har)* apply header size caps consistent with mitmproxy reader
+- *(reader)* reject symlinked directory inputs and entries
+
+### Other
+
+- release v0.5.2
+- *(security)* cover symlink directory and entry rejection
+- *(readme)* trim content migrated to book, add docs badge
+- *(book)* add mdBook scaffold with book.toml and all chapter content
+- adjust CHANGELOG/CONTRIBUTING headings for mdBook inclusion
+- regenerate demo.gif [skip ci]
+
 ## [0.5.1](https://github.com/Arkptz/mitm2openapi/compare/v0.5.0...v0.5.1) - 2026-04-22
 
 ### Other
