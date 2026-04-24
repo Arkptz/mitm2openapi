@@ -1,11 +1,18 @@
 # Strict mode
 
-Pass `--strict` to either `discover` or `generate` to treat any warning-level event as a
-hard failure. The process exits with code **2** if any of these occur:
+Pass `--strict` to either `discover` or `generate` to treat warning-level events as
+hard failures. The process exits with code **2** if the processing report records any
+counted events.
 
-- A resource cap fired (input too large, payload too large, depth exceeded)
-- A flow was rejected (invalid UTF-8, unsupported scheme, malformed data)
-- A parse error was encountered (corrupt tnetstring, malformed HAR)
+Currently, the only event counter populated at runtime is `parse_error` — triggered when
+flows cannot be deserialized (corrupt tnetstring data, malformed HAR JSON). The
+`cap_fired` and `rejected` counters exist in the report schema but are not yet wired to
+the reader pipelines; they will be connected in a future release.
+
+In practice, `--strict` today catches:
+
+- Parse errors during flow deserialization (tnetstring or HAR)
+- Errors counted by the streaming iterator wrapper in `discover` mode
 
 ## Usage
 
@@ -41,9 +48,10 @@ mitm2openapi discover \
 
 ## Without `--strict`
 
-Without the flag, the same conditions are logged at `warn` level and processing continues
-with exit code 0. Affected flows or fields are skipped/truncated, but the output file is
-still produced.
+Without the flag, parse errors are logged at `warn` level and processing continues with
+exit code 0. Affected flows are skipped, but the output file is still produced. Other
+warning-level events (cap fires, scheme rejections, etc.) are always logged but do not
+currently increment the report counters that `--strict` checks.
 
 ## Exit codes
 
