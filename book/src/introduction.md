@@ -20,7 +20,7 @@ unattended pipelines.
 
 ## Features
 
-- **Fast** — pure Rust, processes captures in milliseconds
+- **Fast** — pure Rust, ~17× faster than the Python original ([benchmarks](./reference/benchmarks.md))
 - **Single static binary** — no Python, no venv, no pip, no runtime dependencies
 - **Two-format support** — mitmproxy flow dumps (v19/v20/v21) and HAR 1.2
 - **Two-step workflow** — `discover` finds endpoints, you curate, `generate` emits OpenAPI 3.0
