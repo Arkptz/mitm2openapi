@@ -78,9 +78,10 @@ mitm2openapi generate [OPTIONS] -i <INPUT> -t <TEMPLATES> -o <OUTPUT> -p <PREFIX
 
 ### `--format`
 
-By default, the input format is auto-detected from file content:
-- Files starting with a tnetstring length prefix are treated as mitmproxy flow dumps
-- Files starting with `{` are treated as HAR
+By default, the input format is auto-detected from a combination of file extension and
+content sniffing:
+- `.flow` extension or content starting with a tnetstring length prefix → mitmproxy format
+- `.har` extension or content starting with `{` → HAR format
 
 Use `--format mitmproxy` or `--format har` to override auto-detection.
 
