@@ -80,6 +80,9 @@ pub struct DiscoverArgs {
     #[arg(long, value_parser = parse_byte_size, default_value = "2GiB")]
     pub max_input_size: u64,
 
+    #[arg(long, value_parser = parse_byte_size, default_value = "256MiB")]
+    pub max_payload_size: u64,
+
     #[arg(long, default_value_t = false)]
     pub allow_symlinks: bool,
 
@@ -91,6 +94,12 @@ pub struct DiscoverArgs {
     /// Write a structured JSON processing report to the given path
     #[arg(long)]
     pub report: Option<PathBuf>,
+
+    #[arg(long, default_value_t = false)]
+    pub skip_options: bool,
+
+    #[arg(long)]
+    pub param_regex: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -170,4 +179,16 @@ pub struct GenerateArgs {
     /// Write a structured JSON processing report to the given path
     #[arg(long)]
     pub report: Option<PathBuf>,
+
+    #[arg(long, default_value_t = false)]
+    pub skip_options: bool,
+
+    #[arg(long, default_value_t = 5)]
+    pub max_examples: usize,
+
+    #[arg(long, value_delimiter = ',')]
+    pub redact_patterns: Vec<String>,
+
+    #[arg(long, value_delimiter = ',')]
+    pub redact_fields: Vec<String>,
 }

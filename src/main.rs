@@ -45,15 +45,37 @@ fn run(cli: Cli) -> Result<i32> {
                 &args.format,
                 args.max_input_size,
                 args.allow_symlinks,
+                args.max_payload_size as usize,
             )?;
 
             let counting_iter = CountingIterator::new(req_iter);
             let error_count = counting_iter.error_count.clone();
 
+            let filtered_iter: Box<
+                dyn Iterator<Item = mitm2openapi::error::Result<Box<dyn CapturedRequest>>>,
+            > = if args.skip_options {
+                Box::new(counting_iter.filter(|r| {
+                    r.as_ref()
+                        .map(|req| req.get_method().to_uppercase() != "OPTIONS")
+                        .unwrap_or(true)
+                }))
+            } else {
+                Box::new(counting_iter)
+            };
+
+            let custom_re = args
+                .param_regex
+                .as_deref()
+                .map(|pat| {
+                    regex::Regex::new(pat)
+                        .with_context(|| format!("invalid --param-regex pattern: {pat}"))
+                })
+                .transpose()?;
+
             let templates = builder::discover_paths_streaming(
-                counting_iter,
+                filtered_iter,
                 &args.prefix,
-                None,
+                custom_re.as_ref(),
                 &args.exclude_patterns,
                 &args.include_patterns,
             );
@@ -120,6 +142,7 @@ fn run(cli: Cli) -> Result<i32> {
                 &args.format,
                 args.max_input_size,
                 args.allow_symlinks,
+                args.max_payload_size as usize,
             )?;
 
             let all_templates = load_templates(&args.templates).with_context(|| {
@@ -149,6 +172,10 @@ fn run(cli: Cli) -> Result<i32> {
                 ignore_images: args.ignore_images,
                 suppress_params: args.suppress_params,
                 tags_overrides: args.tags_overrides.clone(),
+                skip_options: args.skip_options,
+                max_examples: args.max_examples,
+                redact_patterns: args.redact_patterns.clone(),
+                redact_fields: args.redact_fields.clone(),
             };
 
             let mut builder = OpenApiBuilder::new(&args.prefix, &config, active_templates);
@@ -273,6 +300,7 @@ fn stream_input(
     format: &InputFormat,
     max_input_size: u64,
     allow_symlinks: bool,
+    max_payload_size: usize,
 ) -> Result<RequestIter> {
     // Check symlink-ness before is_dir(), since is_dir() follows symlinks.
     if !allow_symlinks {
@@ -295,13 +323,13 @@ fn stream_input(
             debug!(path = %path.display(), "Streaming as mitmproxy format");
             if path.is_dir() {
                 if reject_symlinks {
-                    mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(path)
+                    mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(path, max_payload_size)
                 } else {
-                    mitmproxy_reader::stream_mitmproxy_dir(path)
+                    mitmproxy_reader::stream_mitmproxy_dir(path, max_payload_size)
                 }
                 .context("failed to stream mitmproxy directory")
             } else {
-                let iter = mitmproxy_reader::stream_mitmproxy_file(path)
+                let iter = mitmproxy_reader::stream_mitmproxy_file(path, max_payload_size)
                     .context("failed to stream mitmproxy file")?;
                 Ok(Box::new(iter))
             }
@@ -315,9 +343,9 @@ fn stream_input(
             if path.is_dir() {
                 debug!(path = %path.display(), "Auto-detecting format for directory");
                 let mitmproxy_result = if reject_symlinks {
-                    mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(path)
+                    mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(path, max_payload_size)
                 } else {
-                    mitmproxy_reader::stream_mitmproxy_dir(path)
+                    mitmproxy_reader::stream_mitmproxy_dir(path, max_payload_size)
                 };
                 let har_result = if reject_symlinks {
                     har_reader::stream_har_dir_no_symlinks(path)
@@ -347,7 +375,7 @@ fn stream_input(
 
                 if ms > hs {
                     info!(path = %path.display(), "Auto-detected as mitmproxy format");
-                    let iter = mitmproxy_reader::stream_mitmproxy_file(path)
+                    let iter = mitmproxy_reader::stream_mitmproxy_file(path, max_payload_size)
                         .context("detected as mitmproxy format but failed to parse")?;
                     Ok(Box::new(iter))
                 } else if hs > ms {
@@ -357,7 +385,7 @@ fn stream_input(
                     Ok(Box::new(iter))
                 } else if ms > 0 {
                     warn!(path = %path.display(), "Ambiguous format detection, trying mitmproxy first");
-                    match mitmproxy_reader::stream_mitmproxy_file(path) {
+                    match mitmproxy_reader::stream_mitmproxy_file(path, max_payload_size) {
                         Ok(iter) => Ok(Box::new(iter)),
                         Err(_) => {
                             let iter = har_reader::stream_har_file(path)

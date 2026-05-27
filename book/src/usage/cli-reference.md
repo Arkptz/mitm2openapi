@@ -3,7 +3,7 @@
 <!-- toc -->
 
 ```admonish warning
-This reference was last synced with `mitm2openapi --help` at version 0.5.1.
+This reference was last synced with `mitm2openapi --help` at version 0.6.0.
 If you notice a flag missing from your local `--help` output, the tool may be ahead of these
 docs. [Open an issue](https://github.com/Arkptz/mitm2openapi/issues/new) to prompt an update.
 ```
@@ -35,6 +35,8 @@ mitm2openapi discover [OPTIONS] -i <INPUT> -o <OUTPUT> -p <PREFIX>
 | `--allow-symlinks` | off | Allow symlinked input files |
 | `--strict` | off | Treat warnings as errors (exit code 2) |
 | `--report <PATH>` | | Write structured JSON processing report |
+| `--skip-options` | off | Filter out OPTIONS requests from output |
+| `--param-regex <PATTERN>` | | Custom regex for path parameter detection |
 
 ## `mitm2openapi generate`
 
@@ -73,6 +75,10 @@ mitm2openapi generate [OPTIONS] -i <INPUT> -t <TEMPLATES> -o <OUTPUT> -p <PREFIX
 | `--allow-symlinks` | off | Allow symlinked input files |
 | `--strict` | off | Treat warnings as errors (exit code 2) |
 | `--report <PATH>` | | Write structured JSON processing report |
+| `--skip-options` | off | Filter out OPTIONS requests from output |
+| `--max-examples <N>` | `5` | Maximum examples per endpoint per status code |
+| `--redact-patterns <PATTERNS>` | | Comma-separated regex patterns to redact from examples |
+| `--redact-fields <FIELDS>` | | Comma-separated field names to redact from examples |
 
 ## Common flag details
 

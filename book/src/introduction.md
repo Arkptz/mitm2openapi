@@ -30,6 +30,9 @@ unattended pipelines.
 - **Resource limits** — configurable caps prevent denial-of-service on untrusted input
 - **Strict mode** — treat warnings as errors for CI gates
 - **Structured reports** — `--report` outputs machine-readable JSON processing summaries
+- **Response examples** — captured request/response bodies stored as named OpenAPI examples
+- **Smart parameterization** — detects UUIDs, hex strings, base58, UPPER_CASE slugs, and cross-request variability
+- **Redaction** — `--redact-patterns` and `--redact-fields` scrub sensitive data from examples
 - **Battle-tested** — integration tests against Swagger Petstore and OWASP crAPI
 - **Cross-platform** — Linux, macOS, Windows pre-built binaries
 

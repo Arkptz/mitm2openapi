@@ -118,7 +118,10 @@ fn symlink_dir_entry_rejected_in_mitmproxy() {
     let link_file = dir.path().join("linked.flow");
     unix_fs::symlink(&real_file, &link_file).unwrap();
 
-    let iter = mitm2openapi::mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(dir.path());
+    let iter = mitm2openapi::mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(
+        dir.path(),
+        mitm2openapi::MAX_PAYLOAD_SIZE,
+    );
     assert!(iter.is_ok(), "should open directory");
     let results: Vec<_> = iter.unwrap().filter_map(|r| r.ok()).collect();
 
@@ -127,10 +130,13 @@ fn symlink_dir_entry_rejected_in_mitmproxy() {
         "real file should produce at least one flow"
     );
 
-    let all_results: Vec<_> = mitm2openapi::mitmproxy_reader::stream_mitmproxy_dir(dir.path())
-        .unwrap()
-        .filter_map(|r| r.ok())
-        .collect();
+    let all_results: Vec<_> = mitm2openapi::mitmproxy_reader::stream_mitmproxy_dir(
+        dir.path(),
+        mitm2openapi::MAX_PAYLOAD_SIZE,
+    )
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect();
     assert!(
         all_results.len() > results.len(),
         "without symlink rejection, both files should be processed"

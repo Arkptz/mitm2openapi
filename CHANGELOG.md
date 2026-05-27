@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(cli)* add `--skip-options` flag to filter OPTIONS requests (discover + generate)
+- *(cli)* add `--param-regex` flag for custom path parameter detection (discover)
+- *(cli)* add `--max-examples` flag to cap examples per endpoint (generate, default 5)
+- *(cli)* add `--redact-patterns` flag for regex-based value redaction (generate)
+- *(cli)* add `--redact-fields` flag for field-name-based redaction (generate)
+- *(discover)* enhanced path parameterization: UPPER_CASE slugs, hex strings, base58, cross-request variability
+- *(generate)* response/request examples stored as named OpenAPI examples
+- *(generate)* request body schema merging via oneOf for multiple captures
+
 ## [0.5.2](https://github.com/Arkptz/mitm2openapi/compare/v0.5.1...v0.5.2) - 2026-04-24
 
 ### Fixed
