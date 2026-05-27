@@ -171,6 +171,7 @@ fn run(cli: Cli) -> Result<i32> {
                 suppress_params: args.suppress_params,
                 tags_overrides: args.tags_overrides.clone(),
                 skip_options: args.skip_options,
+                max_examples: args.max_examples,
             };
 
             let mut builder = OpenApiBuilder::new(&args.prefix, &config, active_templates);

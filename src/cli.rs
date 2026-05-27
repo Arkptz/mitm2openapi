@@ -179,4 +179,7 @@ pub struct GenerateArgs {
 
     #[arg(long, default_value_t = false)]
     pub skip_options: bool,
+
+    #[arg(long, default_value_t = 5)]
+    pub max_examples: usize,
 }

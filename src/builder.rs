@@ -147,6 +147,8 @@ pub struct OpenApiBuilder {
     compiled_templates: path_matching::CompiledTemplates,
     spec: OpenAPI,
     examples_store: HashMap<(String, String, u16), Vec<(String, serde_json::Value)>>,
+    req_examples_store: HashMap<(String, String, String), Vec<(String, serde_json::Value)>>,
+    max_examples: usize,
 }
 
 fn extract_tag(
@@ -467,6 +469,8 @@ impl OpenApiBuilder {
             compiled_templates,
             spec,
             examples_store: HashMap::new(),
+            req_examples_store: HashMap::new(),
+            max_examples: config.max_examples,
         }
     }
 
@@ -543,10 +547,12 @@ impl OpenApiBuilder {
 
                     let key = (template_path.clone(), method.clone(), status_code);
                     let entries = self.examples_store.entry(key).or_default();
-                    let existing_names: Vec<String> =
-                        entries.iter().map(|(n, _)| n.clone()).collect();
-                    let name = make_example_name(&val, &existing_names);
-                    entries.push((name, val));
+                    if self.max_examples > 0 && entries.len() < self.max_examples {
+                        let existing_names: Vec<String> =
+                            entries.iter().map(|(n, _)| n.clone()).collect();
+                        let name = make_example_name(&val, &existing_names);
+                        entries.push((name, val));
+                    }
                 }
             }
         }
@@ -834,6 +840,7 @@ mod tests {
             suppress_params: false,
             tags_overrides: None,
             skip_options: false,
+            max_examples: 5,
         }
     }
 
@@ -1929,6 +1936,157 @@ mod tests {
                     for (_, mt) in &resp.content {
                         assert!(mt.examples.is_empty(), "text/plain should have no examples");
                     }
+                }
+            }
+        }
+    }
+
+    // ── max_examples cap ───────────────────────────────────────────
+
+    #[test]
+    fn max_examples_cap_enforced() {
+        let mut config = test_config();
+        config.max_examples = 2;
+        let templates = vec!["/users/{id}".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, templates);
+
+        for i in 1..=10 {
+            let req = MockRequest::get(&format!("https://api.example.com/users/{i}"))
+                .with_json_response(&serde_json::json!({"id": i, "name": format!("User{i}")}));
+            builder.add_request(&req);
+        }
+
+        let spec = builder.build();
+        let path_item = spec
+            .paths
+            .paths
+            .get("/users/{id}")
+            .unwrap()
+            .as_item()
+            .unwrap();
+        let op = path_item.get.as_ref().unwrap();
+        let resp = op
+            .responses
+            .responses
+            .get(&StatusCode::Code(200))
+            .unwrap()
+            .as_item()
+            .unwrap();
+        let mt = resp.content.get("application/json").expect("expected json");
+        assert_eq!(mt.examples.len(), 2, "cap of 2 should be enforced");
+    }
+
+    #[test]
+    fn max_examples_zero_disables() {
+        let mut config = test_config();
+        config.max_examples = 0;
+        let templates = vec!["/users/{id}".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, templates);
+
+        for i in 1..=3 {
+            let req = MockRequest::get(&format!("https://api.example.com/users/{i}"))
+                .with_json_response(&serde_json::json!({"id": i}));
+            builder.add_request(&req);
+        }
+
+        let spec = builder.build();
+        let path_item = spec
+            .paths
+            .paths
+            .get("/users/{id}")
+            .unwrap()
+            .as_item()
+            .unwrap();
+        let op = path_item.get.as_ref().unwrap();
+        let resp = op
+            .responses
+            .responses
+            .get(&StatusCode::Code(200))
+            .unwrap()
+            .as_item()
+            .unwrap();
+        let mt = resp.content.get("application/json").expect("expected json");
+        assert_eq!(
+            mt.examples.len(),
+            0,
+            "max_examples=0 should store no examples"
+        );
+    }
+
+    #[test]
+    fn max_examples_default_five() {
+        let config = test_config();
+        let templates = vec!["/users/{id}".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, templates);
+
+        for i in 1..=8 {
+            let req = MockRequest::get(&format!("https://api.example.com/users/{i}"))
+                .with_json_response(&serde_json::json!({"id": i, "name": format!("User{i}")}));
+            builder.add_request(&req);
+        }
+
+        let spec = builder.build();
+        let path_item = spec
+            .paths
+            .paths
+            .get("/users/{id}")
+            .unwrap()
+            .as_item()
+            .unwrap();
+        let op = path_item.get.as_ref().unwrap();
+        let resp = op
+            .responses
+            .responses
+            .get(&StatusCode::Code(200))
+            .unwrap()
+            .as_item()
+            .unwrap();
+        let mt = resp.content.get("application/json").expect("expected json");
+        assert!(
+            mt.examples.len() <= 5,
+            "default cap of 5 should be enforced, got {}",
+            mt.examples.len()
+        );
+    }
+
+    #[test]
+    fn request_examples_multiple_captures() {
+        let config = test_config();
+        let templates = vec!["/orders".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, templates);
+
+        for i in 1..=3u32 {
+            let req = MockRequest::post("https://api.example.com/orders")
+                .with_json_request_body(&serde_json::json!({"item": i, "qty": i}))
+                .with_json_response(&serde_json::json!({"id": i}))
+                .with_status(201, "Created");
+            builder.add_request(&req);
+        }
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths.get("/orders").expect("expected /orders");
+        let op = path_item.as_item().unwrap().post.as_ref().unwrap();
+        let rb = op.request_body.as_ref().unwrap().as_item().unwrap();
+        let mt = rb.content.get("application/json").expect("expected json");
+        assert_eq!(mt.examples.len(), 3, "should have 3 request body examples");
+    }
+
+    #[test]
+    fn request_examples_get_no_body() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        for i in 1..=3u32 {
+            let req = MockRequest::get(&format!("https://api.example.com/users/{i}"))
+                .with_json_response(&serde_json::json!({"id": i}));
+            builder.add_request(&req);
+        }
+
+        let spec = builder.build();
+        for (_, path_ref) in &spec.paths.paths {
+            if let ReferenceOr::Item(item) = path_ref {
+                if let Some(op) = &item.get {
+                    assert!(op.request_body.is_none(), "GET should have no requestBody");
                 }
             }
         }

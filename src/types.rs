@@ -24,4 +24,5 @@ pub struct Config {
     pub suppress_params: bool,
     pub tags_overrides: Option<String>,
     pub skip_options: bool,
+    pub max_examples: usize,
 }

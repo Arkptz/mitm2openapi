@@ -89,6 +89,7 @@ fn test_config() -> Config {
         suppress_params: false,
         tags_overrides: None,
         skip_options: false,
+        max_examples: 5,
     }
 }
 
