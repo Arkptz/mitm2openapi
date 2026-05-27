@@ -153,6 +153,7 @@ pub struct OpenApiBuilder {
     redactor: Option<crate::redact::Redactor>,
     operation_id_strategy: crate::operation_id::OperationIdStrategy,
     operation_id_overrides: HashMap<String, String>,
+    envelope_config: Option<crate::envelope::EnvelopeConfig>,
 }
 
 fn extract_tag(
@@ -495,6 +496,7 @@ impl OpenApiBuilder {
         let tag_strategy = config.tag_strategy.clone();
         let operation_id_strategy = config.operation_id_strategy.clone();
         let operation_id_overrides = config.operation_id_overrides.clone();
+        let envelope_config = config.envelope_config.clone();
 
         Self {
             prefix: prefix.to_string(),
@@ -509,6 +511,7 @@ impl OpenApiBuilder {
             redactor,
             operation_id_strategy,
             operation_id_overrides,
+            envelope_config,
         }
     }
 
@@ -808,6 +811,140 @@ impl OpenApiBuilder {
             }
         }
 
+        // Envelope detection: MUST run before examples_store.drain() consumes raw bodies.
+        if let Some(ref envelope_cfg) = self.envelope_config {
+            let mut all_error_bodies: Vec<serde_json::Value> = Vec::new();
+            let mut components_schemas: indexmap::IndexMap<String, ReferenceOr<openapiv3::Schema>> =
+                indexmap::IndexMap::new();
+
+            struct EnvelopeChange {
+                path: String,
+                method: String,
+                success_name: String,
+                success_schema: openapiv3::Schema,
+                one_of: ReferenceOr<openapiv3::Schema>,
+            }
+            let mut changes: Vec<EnvelopeChange> = Vec::new();
+
+            for ((path, method, status), body_examples) in &self.examples_store {
+                if *status != 200 {
+                    continue;
+                }
+                let bodies: Vec<serde_json::Value> =
+                    body_examples.iter().map(|(_, v)| v.clone()).collect();
+                let (_, error_bodies) =
+                    crate::envelope::group_bodies(&bodies, &envelope_cfg.discriminator_field);
+
+                if error_bodies.is_empty() {
+                    continue;
+                }
+
+                all_error_bodies.extend(error_bodies.iter().cloned());
+
+                let op_id = self
+                    .spec
+                    .paths
+                    .paths
+                    .get(path.as_str())
+                    .and_then(|p| {
+                        if let ReferenceOr::Item(pi) = p {
+                            Some(pi)
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|pi| get_operation_ref(pi, method))
+                    .and_then(|s| s.as_ref())
+                    .and_then(|op| op.operation_id.as_deref().map(String::from));
+
+                let success_schema = {
+                    let path_ref = self.spec.paths.paths.get(path.as_str());
+                    let path_item = match path_ref {
+                        Some(ReferenceOr::Item(pi)) => pi,
+                        _ => continue,
+                    };
+                    let op = match get_operation_ref(path_item, method) {
+                        Some(Some(op)) => op,
+                        _ => continue,
+                    };
+                    let resp = match op.responses.responses.get(&StatusCode::Code(200)) {
+                        Some(ReferenceOr::Item(r)) => r,
+                        _ => continue,
+                    };
+                    let mt = match resp.content.values().next() {
+                        Some(mt) => mt,
+                        None => continue,
+                    };
+                    match &mt.schema {
+                        Some(ReferenceOr::Item(schema)) => schema.clone(),
+                        _ => continue,
+                    }
+                };
+
+                let success_name = crate::envelope::success_component_name(
+                    op_id.as_deref(),
+                    path,
+                    method,
+                    &envelope_cfg.success_suffix,
+                );
+
+                let success_ref_str = format!("#/components/schemas/{success_name}");
+                let error_ref_str = "#/components/schemas/ApiError".to_string();
+                let one_of = crate::envelope::build_one_of_schema(
+                    &success_ref_str,
+                    &error_ref_str,
+                    &envelope_cfg.discriminator_field,
+                );
+
+                changes.push(EnvelopeChange {
+                    path: path.clone(),
+                    method: method.clone(),
+                    success_name,
+                    success_schema,
+                    one_of,
+                });
+            }
+
+            for change in changes {
+                components_schemas.insert(
+                    change.success_name,
+                    ReferenceOr::Item(change.success_schema),
+                );
+
+                if let Some(ReferenceOr::Item(path_item)) =
+                    self.spec.paths.paths.get_mut(change.path.as_str())
+                {
+                    if let Some(slot) = get_operation_mut(path_item, &change.method) {
+                        if let Some(op) = slot.as_mut() {
+                            if let Some(ReferenceOr::Item(resp)) =
+                                op.responses.responses.get_mut(&StatusCode::Code(200))
+                            {
+                                if let Some(mt) = resp.content.values_mut().next() {
+                                    mt.schema = Some(change.one_of);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !all_error_bodies.is_empty() {
+                let api_error_schema =
+                    crate::envelope::infer_api_error(&all_error_bodies, envelope_cfg);
+                components_schemas
+                    .insert("ApiError".to_string(), ReferenceOr::Item(api_error_schema));
+            }
+
+            if !components_schemas.is_empty() {
+                let components = self
+                    .spec
+                    .components
+                    .get_or_insert_with(openapiv3::Components::default);
+                for (name, schema) in components_schemas {
+                    components.schemas.insert(name, schema);
+                }
+            }
+        }
         for ((path, method, status), examples) in self.examples_store.drain() {
             let Some(ReferenceOr::Item(path_item)) = self.spec.paths.paths.get_mut(&path) else {
                 continue;
