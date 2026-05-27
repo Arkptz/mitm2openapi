@@ -25,4 +25,6 @@ pub struct Config {
     pub tags_overrides: Option<String>,
     pub skip_options: bool,
     pub max_examples: usize,
+    pub redact_patterns: Vec<String>,
+    pub redact_fields: Vec<String>,
 }

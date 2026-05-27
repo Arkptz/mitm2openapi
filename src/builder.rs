@@ -149,6 +149,7 @@ pub struct OpenApiBuilder {
     examples_store: HashMap<(String, String, u16), Vec<(String, serde_json::Value)>>,
     req_examples_store: HashMap<(String, String, String), Vec<(String, serde_json::Value)>>,
     max_examples: usize,
+    redactor: Option<crate::redact::Redactor>,
 }
 
 fn extract_tag(
@@ -462,6 +463,18 @@ impl OpenApiBuilder {
                 path_matching::CompiledTemplates::new(&[]).unwrap()
             });
 
+        let redactor = if !config.redact_patterns.is_empty() || !config.redact_fields.is_empty() {
+            match crate::redact::Redactor::new(&config.redact_patterns, &config.redact_fields) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to compile redact patterns, skipping redaction");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             prefix: prefix.to_string(),
             config: config.clone(),
@@ -471,6 +484,7 @@ impl OpenApiBuilder {
             examples_store: HashMap::new(),
             req_examples_store: HashMap::new(),
             max_examples: config.max_examples,
+            redactor,
         }
     }
 
@@ -732,7 +746,10 @@ impl OpenApiBuilder {
                 continue;
             };
             let mut ex_map: IndexMap<String, ReferenceOr<Example>> = IndexMap::new();
-            for (name, value) in examples {
+            for (name, mut value) in examples {
+                if let Some(r) = &self.redactor {
+                    r.redact(&mut value);
+                }
                 ex_map.insert(
                     name,
                     ReferenceOr::Item(Example {
@@ -757,7 +774,10 @@ impl OpenApiBuilder {
                 continue;
             };
             let mut ex_map: IndexMap<String, ReferenceOr<Example>> = IndexMap::new();
-            for (name, value) in examples {
+            for (name, mut value) in examples {
+                if let Some(r) = &self.redactor {
+                    r.redact(&mut value);
+                }
                 ex_map.insert(
                     name,
                     ReferenceOr::Item(Example {
@@ -880,6 +900,8 @@ mod tests {
             tags_overrides: None,
             skip_options: false,
             max_examples: 5,
+            redact_patterns: vec![],
+            redact_fields: vec![],
         }
     }
 
@@ -2162,5 +2184,93 @@ mod tests {
         let names: Vec<&String> = mt.examples.keys().collect();
         assert_eq!(names[0], "active");
         assert_eq!(names[1], "active_2");
+    }
+
+    // ── redaction integration ──────────────────────────────────────
+
+    #[test]
+    fn redact_integration_field() {
+        let mut config = test_config();
+        config.redact_fields = vec!["token".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req = MockRequest::get("https://api.example.com/auth")
+            .with_json_response(&serde_json::json!({"token": "secret123", "user": "alice"}));
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths["/auth"].as_item().unwrap();
+        let op = path_item.get.as_ref().unwrap();
+        let resp = op
+            .responses
+            .responses
+            .get(&StatusCode::Code(200))
+            .unwrap()
+            .as_item()
+            .unwrap();
+        let mt = resp.content.get("application/json").unwrap();
+        let ex = mt.examples.values().next().unwrap().as_item().unwrap();
+        let val = ex.value.as_ref().unwrap();
+        assert_eq!(val["token"], "[REDACTED]");
+        assert_eq!(val["user"], "alice");
+    }
+
+    #[test]
+    fn redact_integration_pattern() {
+        let mut config = test_config();
+        config.redact_patterns = vec!["[0-9a-f]{32,}".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req = MockRequest::post("https://api.example.com/login")
+            .with_json_request_body(
+                &serde_json::json!({"session": "abcdef1234567890abcdef1234567890"}),
+            )
+            .with_json_response(&serde_json::json!({"ok": true}))
+            .with_status(200, "OK");
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths["/login"].as_item().unwrap();
+        let op = path_item.post.as_ref().unwrap();
+        let rb = op.request_body.as_ref().unwrap().as_item().unwrap();
+        let mt = rb.content.get("application/json").unwrap();
+        let ex = mt.examples.values().next().unwrap().as_item().unwrap();
+        let val = ex.value.as_ref().unwrap();
+        assert_eq!(val["session"], "[REDACTED]");
+    }
+
+    #[test]
+    fn redact_schema_unaffected() {
+        let mut config = test_config();
+        config.redact_fields = vec!["token".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req = MockRequest::get("https://api.example.com/auth")
+            .with_json_response(&serde_json::json!({"token": "secret123", "user": "alice"}));
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths["/auth"].as_item().unwrap();
+        let op = path_item.get.as_ref().unwrap();
+        let resp = op
+            .responses
+            .responses
+            .get(&StatusCode::Code(200))
+            .unwrap()
+            .as_item()
+            .unwrap();
+        let mt = resp.content.get("application/json").unwrap();
+        let schema = mt.schema.as_ref().unwrap().as_item().unwrap();
+        match &schema.schema_kind {
+            openapiv3::SchemaKind::Type(openapiv3::Type::Object(obj)) => {
+                assert!(obj.properties.contains_key("token"));
+                let token_schema = obj.properties["token"].as_item().unwrap();
+                match &token_schema.schema_kind {
+                    openapiv3::SchemaKind::Type(openapiv3::Type::String(_)) => {}
+                    other => panic!("expected string schema for token, got {:?}", other),
+                }
+            }
+            other => panic!("expected Object schema, got {:?}", other),
+        }
     }
 }
