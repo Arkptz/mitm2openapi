@@ -23,6 +23,7 @@ pub mod cli;
 pub mod error;
 pub mod har_reader;
 pub mod mitmproxy_reader;
+pub mod operation_id;
 pub mod output;
 pub mod params;
 pub mod path_matching;
