@@ -151,6 +151,8 @@ pub struct OpenApiBuilder {
     req_examples_store: HashMap<(String, String, String), Vec<(String, serde_json::Value)>>,
     max_examples: usize,
     redactor: Option<crate::redact::Redactor>,
+    operation_id_strategy: crate::operation_id::OperationIdStrategy,
+    operation_id_overrides: HashMap<String, String>,
 }
 
 fn extract_tag(
@@ -293,6 +295,20 @@ fn parse_body(body: &[u8], content_type: Option<&str>) -> Option<(String, serde_
     }
 
     None
+}
+
+fn get_operation_ref<'a>(path_item: &'a PathItem, method: &str) -> Option<&'a Option<Operation>> {
+    match method.to_uppercase().as_str() {
+        "GET" => Some(&path_item.get),
+        "PUT" => Some(&path_item.put),
+        "POST" => Some(&path_item.post),
+        "DELETE" => Some(&path_item.delete),
+        "OPTIONS" => Some(&path_item.options),
+        "HEAD" => Some(&path_item.head),
+        "PATCH" => Some(&path_item.patch),
+        "TRACE" => Some(&path_item.trace),
+        _ => None,
+    }
 }
 
 /// Get the method-specific operation slot from a PathItem (mutable).
@@ -477,6 +493,8 @@ impl OpenApiBuilder {
         };
 
         let tag_strategy = config.tag_strategy.clone();
+        let operation_id_strategy = config.operation_id_strategy.clone();
+        let operation_id_overrides = config.operation_id_overrides.clone();
 
         Self {
             prefix: prefix.to_string(),
@@ -489,6 +507,8 @@ impl OpenApiBuilder {
             req_examples_store: HashMap::new(),
             max_examples: config.max_examples,
             redactor,
+            operation_id_strategy,
+            operation_id_overrides,
         }
     }
 
@@ -661,6 +681,18 @@ impl OpenApiBuilder {
             }
         }
 
+        let override_key = format!("{} {}", method, template_path);
+        let op_id = if let Some(id) = self.operation_id_overrides.get(&override_key) {
+            Some(id.clone())
+        } else {
+            crate::operation_id::derive_operation_id(
+                &method,
+                &template_path,
+                &self.operation_id_strategy,
+            )
+        };
+        operation.operation_id = op_id;
+
         if !self.config.suppress_params {
             let mut parameters: Vec<ReferenceOr<openapiv3::Parameter>> = Vec::new();
 
@@ -748,6 +780,34 @@ impl OpenApiBuilder {
 
     /// Get the assembled OpenAPI spec.
     pub fn build(mut self) -> OpenAPI {
+        if !matches!(
+            self.operation_id_strategy,
+            crate::operation_id::OperationIdStrategy::None
+        ) {
+            let mut ops: Vec<(String, String, Option<String>)> = Vec::new();
+            for (path, path_ref) in &self.spec.paths.paths {
+                if let ReferenceOr::Item(path_item) = path_ref {
+                    for method in &[
+                        "GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE",
+                    ] {
+                        if let Some(Some(op)) = get_operation_ref(path_item, method) {
+                            ops.push((path.clone(), method.to_string(), op.operation_id.clone()));
+                        }
+                    }
+                }
+            }
+            crate::operation_id::resolve_collisions(&mut ops);
+            for (path, method, resolved_id) in ops {
+                if let Some(ReferenceOr::Item(path_item)) = self.spec.paths.paths.get_mut(&path) {
+                    if let Some(slot) = get_operation_mut(path_item, &method) {
+                        if let Some(op) = slot.as_mut() {
+                            op.operation_id = resolved_id;
+                        }
+                    }
+                }
+            }
+        }
+
         for ((path, method, status), examples) in self.examples_store.drain() {
             let Some(ReferenceOr::Item(path_item)) = self.spec.paths.paths.get_mut(&path) else {
                 continue;
