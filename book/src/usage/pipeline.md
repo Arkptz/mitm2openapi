@@ -251,3 +251,84 @@ mitm2openapi generate \
 The generated `openapi.yaml` is a valid OpenAPI 3.0 document that can be opened in
 [Swagger UI](https://github.com/swagger-api/swagger-ui), imported into Postman, or used
 as a contract for API testing.
+
+## Generating stable operationIds
+
+Use `--operation-id-strategy path` to generate camelCase operationIds that openapi-generator converts to readable Rust method names:
+
+```sh
+mitm2openapi generate -i capture.har -t templates.yaml -o openapi.yaml -p https://api.example.com \
+  --operation-id-strategy path
+```
+
+This produces ids like `listUsers`, `getUser`, `createOrder`, `placeOrder`.
+
+Override specific operations with a YAML file:
+
+```yaml
+# overrides.yaml
+"GET /api/v1/contract/fair_price/{symbol}": getFairPrice
+"POST /api/v1/private/order/place": placeOrder
+```
+
+```sh
+mitm2openapi generate ... --operation-id-strategy path --operation-id-overrides overrides.yaml
+```
+
+## Organizing operations with tags
+
+Tags group operations into modules (one Rust source file per tag in openapi-generator). Use regex-based rules:
+
+```yaml
+# tag-rules.yaml
+rules:
+  - match: "^/api/v1/contract/"
+    tag: Contract
+  - match: "^/api/v1/private/"
+    tag: Private
+default: Market
+```
+
+```sh
+mitm2openapi generate ... --tag-rules tag-rules.yaml
+```
+
+Or use a fixed path segment as the tag:
+
+```sh
+mitm2openapi generate ... --tag-strategy path-segment --tag-segment-index 2
+```
+
+## MEXC-style envelope APIs
+
+MEXC and similar exchange APIs always return HTTP 200 with a `success` boolean:
+
+```json
+{"success": true,  "data": {"price": 42000.5}}
+{"success": false, "code": 1, "message": "Invalid symbol"}
+```
+
+Use `--envelope-discriminator` to split captured bodies into typed schemas:
+
+```sh
+mitm2openapi generate \
+  -i capture.har -t templates.yaml -o openapi.yaml \
+  -p https://api.example.com \
+  --operation-id-strategy path \
+  --tag-rules tag-rules.yaml \
+  --envelope-discriminator success
+```
+
+The generated spec will include:
+
+- A shared `components/schemas/ApiError` (inferred from all error bodies)
+- Per-operation `{OperationId}Success` schemas
+- `oneOf(SuccessSchema, ApiError)` for operations with mixed bodies
+
+Supply your own error schema instead of inferring:
+
+```sh
+mitm2openapi generate ... \
+  --envelope-discriminator success \
+  --envelope-error-shape api-error.yaml
+```

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(generate)* add `--operation-id-strategy {none,path,template}` flag for stable operationId generation
+- *(generate)* add `--operation-id-overrides <path>` for per-operation overrides via YAML
+- *(generate)* add `--operation-id-template <string>` for custom operationId templates
+- *(generate)* add `--tag-strategy {legacy,none,path-segment,rules}` flag
+- *(generate)* add `--tag-rules <path>` for regex-based tag assignment from YAML
+- *(generate)* add `--tag-segment-index <N>` to use a specific path segment as tag
+- *(generate)* add `--envelope-discriminator <field>` for discriminator-based response splitting
+- *(generate)* add `--envelope-error-shape <path>` for hand-supplied ApiError schema
+- *(generate)* add `--envelope-success-component-suffix <string>` (default `Success`)
+- *(output)* sort paths and component schemas alphabetically for deterministic YAML output
+
 ## [0.6.0](https://github.com/Arkptz/mitm2openapi/compare/v0.5.2...v0.6.0) - 2026-05-27
 
 ### Added

@@ -79,6 +79,15 @@ mitm2openapi generate [OPTIONS] -i <INPUT> -t <TEMPLATES> -o <OUTPUT> -p <PREFIX
 | `--max-examples <N>` | `5` | Maximum examples per endpoint per status code |
 | `--redact-patterns <PATTERNS>` | | Comma-separated regex patterns to redact from examples |
 | `--redact-fields <FIELDS>` | | Comma-separated field names to redact from examples |
+| `--operation-id-strategy <STRATEGY>` | `none` | Strategy for operationId generation: `none`, `path`, `template` |
+| `--operation-id-template <STRING>` | | Template with `{method}` and `{path}` placeholders (requires `template`) |
+| `--operation-id-overrides <PATH>` | | YAML file with per-operation overrides |
+| `--tag-strategy <STRATEGY>` | `legacy` | Tag assignment strategy: `legacy`, `none`, `path-segment`, `rules` |
+| `--tag-segment-index <N>` | | Path segment index for tag (requires `path-segment`) |
+| `--tag-rules <PATH>` | | YAML rules file (auto-sets strategy to `rules`) |
+| `--envelope-discriminator <FIELD>` | | JSON field name for discriminating success vs error |
+| `--envelope-error-shape <PATH>` | | YAML file with hand-supplied ApiError schema |
+| `--envelope-success-component-suffix <STRING>` | `Success` | Suffix for success component names |
 
 ## Common flag details
 
