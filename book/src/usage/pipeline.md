@@ -66,8 +66,24 @@ named parameters:
 | `/api/users/42`, `/api/users/99` | `/api/users/{id}` |
 | `/api/orders/abc-def-123` | `/api/orders/{id}` |
 
-UUID-like and numeric segments are detected automatically. More complex patterns require
-manual editing of the templates file.
+UUID-like and numeric segments are detected automatically. The following patterns are also
+recognized:
+
+- **UPPER_CASE slugs** — e.g. `BTC_USDT`, `ETH_BTC`
+- **Hex strings** — segments starting with `0x`
+- **Base58 identifiers** — alphanumeric segments 20+ characters long
+- **Cross-request variability** — segments with 3 or more distinct values across requests
+
+For patterns not covered by the built-in heuristics, use `--param-regex` to supply a custom
+regex. Any path segment matching the regex is treated as a parameter:
+
+```bash
+mitm2openapi discover \
+  -i capture.flow \
+  -o templates.yaml \
+  -p "https://api.example.com" \
+  --param-regex '[A-Z]{2,}_[A-Z]{2,}'
+```
 
 ## Step 2: Curate
 
@@ -164,6 +180,43 @@ mitm2openapi generate \
 ```
 
 See the [CLI reference](./cli-reference.md) for all available options.
+
+### Response and request examples
+
+The `generate` step captures actual request and response bodies as named examples in the
+OpenAPI spec. Each unique response per endpoint and status code is stored as a separate
+example, up to the limit set by `--max-examples` (default: 5).
+
+When multiple requests hit the same endpoint with different request bodies, the schemas are
+merged using `oneOf` to represent all observed variants.
+
+### Redacting sensitive data
+
+Production captures often contain tokens, passwords, or PII. Use `--redact-patterns` and
+`--redact-fields` to scrub sensitive values from examples before they land in the spec:
+
+```bash
+mitm2openapi generate \
+  -i capture.flow \
+  -t templates.yaml \
+  -o openapi.yaml \
+  -p "https://api.example.com" \
+  --redact-patterns 'eyJ[\w-]+,sk-[a-zA-Z0-9]+' \
+  --redact-fields 'password,token,secret,authorization'
+```
+
+`--redact-patterns` accepts comma-separated regexes matched against string values.
+`--redact-fields` accepts comma-separated field names whose values are replaced with
+`"[REDACTED]"`.
+
+### Filtering OPTIONS requests
+
+Both `discover` and `generate` accept `--skip-options` to exclude HTTP OPTIONS requests
+(typically CORS preflight) from processing:
+
+```bash
+mitm2openapi discover -i capture.flow -o templates.yaml -p "https://api.example.com" --skip-options
+```
 
 ## Worked example
 

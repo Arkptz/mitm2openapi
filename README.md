@@ -33,6 +33,9 @@ Credit to [@alufers](https://github.com/alufers) for the original tool that pion
 - **Two-format support** — mitmproxy flow dumps (v19/v20/v21) and HAR 1.2
 - **Two-step workflow** — `discover` finds endpoints, you curate, `generate` emits clean OpenAPI 3.0
 - **Glob filters** — `--exclude-patterns` and `--include-patterns` for automated pipelines
+- **Response examples** — captured bodies stored as named OpenAPI examples with `--max-examples` cap
+- **Smart parameterization** — detects UUIDs, hex, base58, UPPER_CASE slugs, and cross-request variability
+- **Redaction** — `--redact-patterns` and `--redact-fields` scrub sensitive data from examples
 - **Error recovery** — skips corrupt flows, continues processing
 - **Auto-detection** — heuristic format detection from file content
 - **Battle-tested** — integration tests against Swagger Petstore and OWASP crAPI with `oasdiff` verification
