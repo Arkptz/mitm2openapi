@@ -1,0 +1,3 @@
+x-path-templates:
+  - /api/v1/users
+  - /api/v1/users/{id}

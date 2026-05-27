@@ -1,0 +1,98 @@
+openapi: '3.0.3'
+info:
+  title: api.example.com API
+  version: 1.0.0
+servers:
+- url: https://api.example.com
+paths:
+  /api/v1/users:
+    get:
+      tags:
+      - api
+      summary: GET /api/v1/users
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
+              examples:
+                response_1:
+                  value:
+                    items:
+                    - id: 1
+                      name: Alice
+    post:
+      tags:
+      - api
+      summary: POST /api/v1/users
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+            examples:
+              Bob:
+                value:
+                  name: Bob
+        required: true
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+              examples:
+                Bob:
+                  value:
+                    id: 2
+                    name: Bob
+  /api/v1/users/{id}:
+    get:
+      tags:
+      - api
+      summary: GET /api/v1/users/{id}
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+        style: simple
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+              examples:
+                Charlie:
+                  value:
+                    id: 42
+                    name: Charlie
