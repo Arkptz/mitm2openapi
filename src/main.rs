@@ -214,6 +214,29 @@ fn run(cli: Cli) -> Result<i32> {
                 }
             };
 
+            let envelope_config = if let Some(discriminator) = args.envelope_discriminator.clone() {
+                let error_shape = if let Some(shape_path) = &args.envelope_error_shape {
+                    let content = std::fs::read_to_string(shape_path).with_context(|| {
+                        format!(
+                            "failed to read envelope error shape from {}",
+                            shape_path.display()
+                        )
+                    })?;
+                    let schema: openapiv3::Schema = serde_yaml_ng::from_str(&content)
+                        .with_context(|| "failed to parse envelope error shape YAML")?;
+                    Some(schema)
+                } else {
+                    None
+                };
+                Some(mitm2openapi::envelope::EnvelopeConfig {
+                    discriminator_field: discriminator,
+                    error_shape,
+                    success_suffix: args.envelope_success_component_suffix.clone(),
+                })
+            } else {
+                None
+            };
+
             let config = Config {
                 prefix: args.prefix.clone(),
                 openapi_title: args.openapi_title.clone(),
@@ -231,6 +254,7 @@ fn run(cli: Cli) -> Result<i32> {
                 tag_strategy,
                 operation_id_strategy,
                 operation_id_overrides,
+                envelope_config,
             };
 
             let mut builder = OpenApiBuilder::new(&args.prefix, &config, active_templates);

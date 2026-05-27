@@ -9,6 +9,7 @@ use openapiv3::{Discriminator, ReferenceOr, Schema, SchemaData, SchemaKind};
 use serde_json::Value;
 
 /// Configuration for envelope-based response splitting.
+#[derive(Clone, Debug)]
 pub struct EnvelopeConfig {
     /// JSON field name used as the discriminator (e.g. `"success"`).
     pub discriminator_field: String,

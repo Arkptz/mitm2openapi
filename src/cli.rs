@@ -235,4 +235,20 @@ pub struct GenerateArgs {
 
     #[arg(long)]
     pub operation_id_overrides: Option<PathBuf>,
+
+    /// Discriminator field name for envelope detection.
+    /// When set, 200 responses with both success:true and success:false
+    /// bodies will be split into oneOf(Success, ApiError).
+    #[arg(long)]
+    pub envelope_discriminator: Option<String>,
+
+    /// Path to YAML file containing the hand-supplied ApiError schema.
+    /// If omitted, schema is inferred from captured error bodies.
+    #[arg(long)]
+    pub envelope_error_shape: Option<PathBuf>,
+
+    /// Suffix for success component names (default: "Success").
+    /// E.g., operationId "getFairPrice" → "GetFairPriceSuccess"
+    #[arg(long, default_value = "Success")]
+    pub envelope_success_component_suffix: String,
 }

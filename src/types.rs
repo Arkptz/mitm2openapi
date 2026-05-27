@@ -1,3 +1,4 @@
+use crate::envelope::EnvelopeConfig;
 use crate::operation_id::OperationIdStrategy;
 use crate::tag_rules::TagStrategy;
 use std::collections::HashMap;
@@ -34,4 +35,5 @@ pub struct Config {
     pub tag_strategy: TagStrategy,
     pub operation_id_strategy: OperationIdStrategy,
     pub operation_id_overrides: HashMap<String, String>,
+    pub envelope_config: Option<EnvelopeConfig>,
 }
