@@ -94,7 +94,7 @@ fn path_to_regex_pattern(template: &str) -> std::result::Result<String, crate::e
     Ok(pattern)
 }
 
-use crate::type_hints::{is_numeric_string, is_uuid};
+use crate::type_hints::{is_base58, is_hex_string, is_numeric_string, is_upper_case_slug, is_uuid};
 
 /// Check if a path segment looks like a parameter value (numeric or UUID).
 ///
@@ -104,7 +104,14 @@ pub fn is_param_segment(segment: &str, custom_regex: Option<&Regex>) -> bool {
     if segment.is_empty() {
         return false;
     }
+    let bytes = segment.as_bytes();
+    if bytes[0] == b'v' && bytes[1..].iter().all(|b| b.is_ascii_digit()) && bytes.len() >= 2 {
+        return false;
+    }
     if is_numeric_string(segment) || is_uuid(segment) {
+        return true;
+    }
+    if is_upper_case_slug(segment) || is_hex_string(segment) || is_base58(segment) {
         return true;
     }
     if let Some(re) = custom_regex {
@@ -427,5 +434,39 @@ mod tests {
         let re = path_to_regex("/api/(v1)/data").unwrap();
         assert!(re.is_match("/api/(v1)/data"));
         assert!(!re.is_match("/api/v1/data"));
+    }
+
+    // ── new heuristics: UPPER_CASE, hex, base58 ────────────────────
+
+    #[test]
+    fn upper_case_slug_is_param() {
+        assert!(is_param_segment("BTC_USDT", None));
+        assert!(is_param_segment("ETH_BTC", None));
+    }
+
+    #[test]
+    fn hex_string_is_param() {
+        assert!(is_param_segment("0xabcdef12345678", None));
+    }
+
+    #[test]
+    fn base58_is_param() {
+        assert!(is_param_segment("5KJvsngHeMpm88xU9Fcd", None));
+    }
+
+    #[test]
+    fn version_prefix_not_param() {
+        assert!(!is_param_segment("v1", None));
+    }
+
+    #[test]
+    fn common_words_not_param() {
+        assert!(!is_param_segment("api", None));
+        assert!(!is_param_segment("users", None));
+    }
+
+    #[test]
+    fn short_uppercase_not_param() {
+        assert!(!is_param_segment("ID", None));
     }
 }

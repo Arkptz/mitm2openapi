@@ -12,6 +12,38 @@ pub(crate) fn is_numeric_string(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
 }
 
+pub(crate) fn is_upper_case_slug(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let all_upper_digit_underscore = s
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    if !all_upper_digit_underscore {
+        return false;
+    }
+    let has_underscore = s.contains('_');
+    let all_alpha = s.chars().all(|c| c.is_ascii_uppercase());
+    if has_underscore {
+        s.len() >= 3
+    } else {
+        all_alpha && s.len() >= 4
+    }
+}
+
+pub(crate) fn is_hex_string(s: &str) -> bool {
+    if let Some(rest) = s.strip_prefix("0x") {
+        rest.len() >= 8 && rest.chars().all(|c| c.is_ascii_hexdigit())
+    } else {
+        s.len() >= 16 && s.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+    }
+}
+
+pub(crate) fn is_base58(s: &str) -> bool {
+    const ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    s.len() >= 20 && s.bytes().all(|b| ALPHABET.contains(&b))
+}
+
 /// Check if a string looks like a UUID (8-4-4-4-12 hex pattern).
 pub(crate) fn is_uuid(s: &str) -> bool {
     let parts: Vec<&str> = s.split('-').collect();
