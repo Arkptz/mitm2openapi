@@ -94,6 +94,9 @@ pub struct DiscoverArgs {
 
     #[arg(long, default_value_t = false)]
     pub skip_options: bool,
+
+    #[arg(long)]
+    pub param_regex: Option<String>,
 }
 
 #[derive(Parser, Debug)]

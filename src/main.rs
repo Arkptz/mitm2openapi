@@ -62,10 +62,19 @@ fn run(cli: Cli) -> Result<i32> {
                 Box::new(counting_iter)
             };
 
+            let custom_re = args
+                .param_regex
+                .as_deref()
+                .map(|pat| {
+                    regex::Regex::new(pat)
+                        .with_context(|| format!("invalid --param-regex pattern: {pat}"))
+                })
+                .transpose()?;
+
             let templates = builder::discover_paths_streaming(
                 filtered_iter,
                 &args.prefix,
-                None,
+                custom_re.as_ref(),
                 &args.exclude_patterns,
                 &args.include_patterns,
             );
