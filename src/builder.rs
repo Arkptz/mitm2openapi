@@ -1,8 +1,9 @@
 use indexmap::IndexMap;
 use openapiv3::{
-    Info, MediaType, OpenAPI, Operation, PathItem, Paths, ReferenceOr, RequestBody, Response,
-    Responses, Server, StatusCode,
+    Example, Info, MediaType, OpenAPI, Operation, PathItem, Paths, ReferenceOr, RequestBody,
+    Response, Responses, Server, StatusCode,
 };
+use std::collections::HashMap;
 use tracing::{debug, warn};
 
 use crate::params;
@@ -145,6 +146,7 @@ pub struct OpenApiBuilder {
     tags_overrides: Option<serde_json::Map<String, serde_json::Value>>,
     compiled_templates: path_matching::CompiledTemplates,
     spec: OpenAPI,
+    examples_store: HashMap<(String, String, u16), Vec<(String, serde_json::Value)>>,
 }
 
 fn extract_tag(
@@ -186,6 +188,47 @@ fn parse_tags_overrides(
 
 fn is_image_content_type(ct: Option<&str>) -> bool {
     ct.is_some_and(|s| s.to_lowercase().starts_with("image/"))
+}
+
+fn is_binary_content_type(ct: Option<&str>) -> bool {
+    ct.is_some_and(|s| {
+        let lower = s.to_lowercase();
+        lower.starts_with("image/") || lower == "application/octet-stream"
+    })
+}
+
+fn make_example_name(val: &serde_json::Value, existing: &[String]) -> String {
+    let base = val
+        .as_object()
+        .and_then(|obj| {
+            obj.iter().filter_map(|(_, v)| v.as_str()).next().map(|s| {
+                s.chars()
+                    .take(32)
+                    .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                    .collect::<String>()
+            })
+        })
+        .filter(|s| !s.is_empty());
+
+    let base = match base {
+        Some(b) => b,
+        None => {
+            let n = existing.len() + 1;
+            return format!("response_{n}");
+        }
+    };
+
+    if !existing.contains(&base) {
+        return base;
+    }
+    let mut i = 2;
+    loop {
+        let candidate = format!("{base}_{i}");
+        if !existing.contains(&candidate) {
+            return candidate;
+        }
+        i += 1;
+    }
 }
 
 fn host_from_prefix(prefix: &str) -> String {
@@ -405,6 +448,7 @@ impl OpenApiBuilder {
             tags_overrides,
             compiled_templates,
             spec,
+            examples_store: HashMap::new(),
         }
     }
 
@@ -466,17 +510,26 @@ impl OpenApiBuilder {
 
         if let Some(resp_body) = request.get_response_body() {
             let resp_ct = request.get_response_content_type();
-            if let Some((media_type_str, val)) = parse_body(resp_body, resp_ct) {
-                let resp_schema = schema::value_to_schema(&val);
-                let mut content = IndexMap::new();
-                content.insert(
-                    media_type_str,
-                    MediaType {
-                        schema: Some(ReferenceOr::Item(resp_schema)),
-                        ..MediaType::default()
-                    },
-                );
-                new_response.content = content;
+            if !is_binary_content_type(resp_ct) {
+                if let Some((media_type_str, val)) = parse_body(resp_body, resp_ct) {
+                    let resp_schema = schema::value_to_schema(&val);
+                    let mut content = IndexMap::new();
+                    content.insert(
+                        media_type_str,
+                        MediaType {
+                            schema: Some(ReferenceOr::Item(resp_schema)),
+                            ..MediaType::default()
+                        },
+                    );
+                    new_response.content = content;
+
+                    let key = (template_path.clone(), method.clone(), status_code);
+                    let entries = self.examples_store.entry(key).or_default();
+                    let existing_names: Vec<String> =
+                        entries.iter().map(|(n, _)| n.clone()).collect();
+                    let name = make_example_name(&val, &existing_names);
+                    entries.push((name, val));
+                }
             }
         }
 
@@ -590,7 +643,34 @@ impl OpenApiBuilder {
     }
 
     /// Get the assembled OpenAPI spec.
-    pub fn build(self) -> OpenAPI {
+    pub fn build(mut self) -> OpenAPI {
+        for ((path, method, status), examples) in self.examples_store.drain() {
+            let Some(ReferenceOr::Item(path_item)) = self.spec.paths.paths.get_mut(&path) else {
+                continue;
+            };
+            let Some(Some(op)) = get_operation_mut(path_item, &method).map(|s| s.as_mut()) else {
+                continue;
+            };
+            let Some(ReferenceOr::Item(resp)) =
+                op.responses.responses.get_mut(&StatusCode::Code(status))
+            else {
+                continue;
+            };
+            let Some(media_type) = resp.content.values_mut().next() else {
+                continue;
+            };
+            let mut ex_map: IndexMap<String, ReferenceOr<Example>> = IndexMap::new();
+            for (name, value) in examples {
+                ex_map.insert(
+                    name,
+                    ReferenceOr::Item(Example {
+                        value: Some(value),
+                        ..Example::default()
+                    }),
+                );
+            }
+            media_type.examples = ex_map;
+        }
         self.spec
     }
 }
@@ -1567,5 +1647,72 @@ mod tests {
             path_item.patch.is_some(),
             "lowercase 'patch' should be normalized to PATCH"
         );
+    }
+
+    // ── examples accumulator ───────────────────────────────────────
+
+    #[test]
+    fn examples_accumulator_basic() {
+        let config = test_config();
+        let templates = vec!["/users/{id}".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, templates);
+
+        let req1 = MockRequest::get("https://api.example.com/users/1")
+            .with_json_response(&serde_json::json!({"name": "Alice", "age": 30}));
+        let req2 = MockRequest::get("https://api.example.com/users/2")
+            .with_json_response(&serde_json::json!({"name": "Bob", "age": 25}));
+
+        builder.add_request(&req1);
+        builder.add_request(&req2);
+
+        let spec = builder.build();
+        let path_item = match spec.paths.paths.get("/users/{id}") {
+            Some(ReferenceOr::Item(item)) => item,
+            _ => panic!("expected /users/{{id}}"),
+        };
+        let op = path_item.get.as_ref().unwrap();
+        let resp = match op.responses.responses.get(&StatusCode::Code(200)) {
+            Some(ReferenceOr::Item(r)) => r,
+            _ => panic!("expected 200 response"),
+        };
+        let mt = resp
+            .content
+            .get("application/json")
+            .expect("expected json media type");
+        assert_eq!(mt.examples.len(), 2, "should have 2 examples");
+    }
+
+    #[test]
+    fn examples_binary_skipped() {
+        let config = test_config();
+        let templates = vec!["/files/{id}".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, templates);
+
+        let req = MockRequest {
+            url: "https://api.example.com/files/1".to_string(),
+            method: "GET".to_string(),
+            request_headers: vec![],
+            request_body: None,
+            response_status: Some(200),
+            response_reason: Some("OK".to_string()),
+            response_headers: None,
+            response_body: Some(vec![0x89, 0x50, 0x4E, 0x47]),
+            response_content_type: Some("image/png".to_string()),
+        };
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths.get("/files/{id}");
+        if let Some(ReferenceOr::Item(item)) = path_item {
+            if let Some(op) = &item.get {
+                for (_, resp_ref) in &op.responses.responses {
+                    if let ReferenceOr::Item(resp) = resp_ref {
+                        for (_, mt) in &resp.content {
+                            assert!(mt.examples.is_empty(), "binary should have no examples");
+                        }
+                    }
+                }
+            }
+        }
     }
 }
