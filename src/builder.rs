@@ -143,6 +143,7 @@ pub fn discover_paths(
 pub struct OpenApiBuilder {
     prefix: String,
     config: Config,
+    tag_strategy: crate::tag_rules::TagStrategy,
     tags_overrides: Option<serde_json::Map<String, serde_json::Value>>,
     compiled_templates: path_matching::CompiledTemplates,
     spec: OpenAPI,
@@ -475,9 +476,12 @@ impl OpenApiBuilder {
             None
         };
 
+        let tag_strategy = config.tag_strategy.clone();
+
         Self {
             prefix: prefix.to_string(),
             config: config.clone(),
+            tag_strategy,
             tags_overrides,
             compiled_templates,
             spec,
@@ -639,8 +643,22 @@ impl OpenApiBuilder {
             ..Operation::default()
         };
 
-        if let Some(tag) = extract_tag(&template_path, &self.tags_overrides) {
-            operation.tags = vec![tag];
+        match &self.tag_strategy {
+            crate::tag_rules::TagStrategy::Legacy => {
+                if let Some(tag) = extract_tag(&template_path, &self.tags_overrides) {
+                    operation.tags = vec![tag];
+                }
+            }
+            crate::tag_rules::TagStrategy::None => {
+                // suppress tags — leave operation.tags empty
+            }
+            crate::tag_rules::TagStrategy::PathSegment { .. }
+            | crate::tag_rules::TagStrategy::Rules { .. } => {
+                if let Some(tag) = crate::tag_rules::resolve_tag(&self.tag_strategy, &template_path)
+                {
+                    operation.tags = vec![tag];
+                }
+            }
         }
 
         if !self.config.suppress_params {
