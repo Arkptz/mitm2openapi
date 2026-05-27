@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/Arkptz/mitm2openapi/compare/v0.5.2...v0.6.0) - 2026-05-27
+
+### Added
+
+- *(generate)* integrate redaction with collected examples
+- *(generate)* collect request body examples
+- *(cli)* add --max-examples flag with default cap of 5
+- *(cli)* re-introduce --param-regex with functional implementation
+- *(discover)* add cross-request variability detection for path params
+- *(generate)* merge request body schemas across multiple captures
+- add redaction module for example sanitization
+- *(cli)* add --skip-options flag to filter OPTIONS requests
+- *(discover)* extend param detection with UPPER_CASE, hex, base58 heuristics
+
+### Fixed
+
+- *(changelog)* remove duplicate Unreleased section
+- *(mitmproxy)* wire --max-payload-size to tnetstring parser, fix clippy
+- *(tests)* replace single-arm match with if let
+- resolve clippy warnings and example name leaking sensitive values
+- *(mitmproxy)* decompress response bodies based on content-encoding header
+
+### Other
+
+- *(integration)* add full pipeline test with all new features
+- update cli-reference, pipeline, introduction, README for new features
+- *(builder)* add examples accumulator infrastructure
+
 ### Added
 
 - *(cli)* add `--skip-options` flag to filter OPTIONS requests (discover + generate)
