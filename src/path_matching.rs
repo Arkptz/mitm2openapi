@@ -104,8 +104,7 @@ pub fn is_param_segment(segment: &str, custom_regex: Option<&Regex>) -> bool {
     if segment.is_empty() {
         return false;
     }
-    let bytes = segment.as_bytes();
-    if bytes[0] == b'v' && bytes[1..].iter().all(|b| b.is_ascii_digit()) && bytes.len() >= 2 {
+    if is_version_prefix(segment) {
         return false;
     }
     if is_numeric_string(segment) || is_uuid(segment) {
@@ -133,8 +132,8 @@ pub fn is_param_segment(segment: &str, custom_regex: Option<&Regex>) -> bool {
 /// assert_eq!(templates, vec!["/users/{id}"]);
 /// ```
 fn is_version_prefix(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    bytes.len() >= 2 && bytes[0] == b'v' && bytes[1..].iter().all(|b| b.is_ascii_digit())
+    let mut chars = s.chars();
+    matches!(chars.next(), Some('v')) && chars.all(|c| c.is_ascii_digit()) && s.len() >= 2
 }
 
 pub fn suggest_param_templates(paths: &[String], custom_regex: Option<&Regex>) -> Vec<String> {

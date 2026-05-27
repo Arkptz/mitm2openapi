@@ -34,10 +34,8 @@ impl Redactor {
                     self.redact(item);
                 }
             }
-            Value::String(s) => {
-                if self.patterns.iter().any(|p| p.is_match(s)) {
-                    *value = Value::String("[REDACTED]".to_string());
-                }
+            Value::String(s) if self.patterns.iter().any(|p| p.is_match(s)) => {
+                *value = Value::String("[REDACTED]".to_string());
             }
             _ => {}
         }

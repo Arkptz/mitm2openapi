@@ -749,14 +749,24 @@ impl OpenApiBuilder {
             for (name, mut value) in examples {
                 if let Some(r) = &self.redactor {
                     r.redact(&mut value);
+                    let existing: Vec<String> = ex_map.keys().cloned().collect();
+                    let new_name = make_example_name(&value, &existing);
+                    ex_map.insert(
+                        new_name,
+                        ReferenceOr::Item(Example {
+                            value: Some(value),
+                            ..Example::default()
+                        }),
+                    );
+                } else {
+                    ex_map.insert(
+                        name,
+                        ReferenceOr::Item(Example {
+                            value: Some(value),
+                            ..Example::default()
+                        }),
+                    );
                 }
-                ex_map.insert(
-                    name,
-                    ReferenceOr::Item(Example {
-                        value: Some(value),
-                        ..Example::default()
-                    }),
-                );
             }
             media_type.examples = ex_map;
         }
@@ -777,14 +787,24 @@ impl OpenApiBuilder {
             for (name, mut value) in examples {
                 if let Some(r) = &self.redactor {
                     r.redact(&mut value);
+                    let existing: Vec<String> = ex_map.keys().cloned().collect();
+                    let new_name = make_example_name(&value, &existing);
+                    ex_map.insert(
+                        new_name,
+                        ReferenceOr::Item(Example {
+                            value: Some(value),
+                            ..Example::default()
+                        }),
+                    );
+                } else {
+                    ex_map.insert(
+                        name,
+                        ReferenceOr::Item(Example {
+                            value: Some(value),
+                            ..Example::default()
+                        }),
+                    );
                 }
-                ex_map.insert(
-                    name,
-                    ReferenceOr::Item(Example {
-                        value: Some(value),
-                        ..Example::default()
-                    }),
-                );
             }
             media_type.examples = ex_map;
         }
