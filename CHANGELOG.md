@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3](https://github.com/Arkptz/mitm2openapi/compare/v0.5.2...v0.5.3) - 2026-05-27
+
+### Fixed
+
+- *(mitmproxy)* decompress response bodies based on content-encoding header ([#47](https://github.com/Arkptz/mitm2openapi/pull/47))
+
 ## [0.5.1](https://github.com/Arkptz/mitm2openapi/compare/v0.5.0...v0.5.1) - 2026-04-22
 
 ### Other
