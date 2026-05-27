@@ -2,7 +2,7 @@
 //! detect parameter segments, and suggest parameterized templates from observed paths.
 
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Convert a path template like "/api/v1/users/{id}" to a regex pattern.
 ///
@@ -132,20 +132,46 @@ pub fn is_param_segment(segment: &str, custom_regex: Option<&Regex>) -> bool {
 /// let templates = suggest_param_templates(&paths, None);
 /// assert_eq!(templates, vec!["/users/{id}"]);
 /// ```
+fn is_version_prefix(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() >= 2 && bytes[0] == b'v' && bytes[1..].iter().all(|b| b.is_ascii_digit())
+}
+
 pub fn suggest_param_templates(paths: &[String], custom_regex: Option<&Regex>) -> Vec<String> {
+    let mut position_values: HashMap<(usize, usize), HashSet<&str>> = HashMap::new();
+    for path in paths {
+        let segs: Vec<&str> = path.split('/').collect();
+        let n = segs.len();
+        for (i, seg) in segs.iter().enumerate() {
+            if seg.is_empty() {
+                continue;
+            }
+            position_values.entry((n, i)).or_default().insert(seg);
+        }
+    }
+    let variability_params: HashSet<(usize, usize)> = position_values
+        .into_iter()
+        .filter(|(_, vals)| {
+            vals.len() >= crate::MIN_VARIABILITY_CARDINALITY
+                && !vals.iter().any(|v| is_version_prefix(v))
+        })
+        .map(|(k, _)| k)
+        .collect();
+
     let mut templates: HashSet<String> = HashSet::new();
 
     for path in paths {
         let segments: Vec<&str> = path.split('/').collect();
+        let n = segments.len();
         let mut param_count = 0u32;
         let mut template_segments: Vec<String> = Vec::new();
 
-        for segment in &segments {
+        for (i, segment) in segments.iter().enumerate() {
             if segment.is_empty() {
                 template_segments.push(String::new());
                 continue;
             }
-            if is_param_segment(segment, custom_regex) {
+            if is_param_segment(segment, custom_regex) || variability_params.contains(&(n, i)) {
                 param_count += 1;
                 template_segments.push(format!("{{__P{}}}", param_count));
             } else {
@@ -468,5 +494,52 @@ mod tests {
     #[test]
     fn short_uppercase_not_param() {
         assert!(!is_param_segment("ID", None));
+    }
+
+    // ── variability detection ──────────────────────────────────────
+
+    #[test]
+    fn variability_three_values_parameterized() {
+        // lowercase slugs not caught by format heuristics — only variability detects these
+        let paths = vec![
+            "/api/v1/pairs/btc-usdt".to_string(),
+            "/api/v1/pairs/eth-btc".to_string(),
+            "/api/v1/pairs/sol-usdt".to_string(),
+        ];
+        let templates = suggest_param_templates(&paths, None);
+        assert_eq!(templates, vec!["/api/v1/pairs/{id}"]);
+    }
+
+    #[test]
+    fn variability_two_values_not_parameterized() {
+        let paths = vec![
+            "/api/v1/status/active".to_string(),
+            "/api/v1/status/inactive".to_string(),
+        ];
+        let templates = suggest_param_templates(&paths, None);
+        assert_eq!(templates.len(), 2);
+        assert!(templates.contains(&"/api/v1/status/active".to_string()));
+        assert!(templates.contains(&"/api/v1/status/inactive".to_string()));
+    }
+
+    #[test]
+    fn variability_version_not_parameterized() {
+        let paths = vec![
+            "/api/v1/users".to_string(),
+            "/api/v2/users".to_string(),
+            "/api/v3/users".to_string(),
+        ];
+        let templates = suggest_param_templates(&paths, None);
+        assert_eq!(templates.len(), 3);
+        assert!(templates.contains(&"/api/v1/users".to_string()));
+        assert!(templates.contains(&"/api/v2/users".to_string()));
+        assert!(templates.contains(&"/api/v3/users".to_string()));
+    }
+
+    #[test]
+    fn variability_combined_with_heuristic() {
+        let paths = vec!["/api/v1/users/12345".to_string()];
+        let templates = suggest_param_templates(&paths, None);
+        assert_eq!(templates, vec!["/api/v1/users/{id}"]);
     }
 }

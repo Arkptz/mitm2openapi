@@ -45,6 +45,9 @@ pub const MAX_DEPTH: usize = 256;
 /// Maximum recursion depth for JSON-to-schema conversion.
 pub const MAX_SCHEMA_DEPTH: usize = 64;
 
+/// Minimum distinct values at a path position to trigger variability-based parameterization.
+pub const MIN_VARIABILITY_CARDINALITY: usize = 3;
+
 /// Maximum body size for response/request bodies (64 MiB).
 pub const MAX_BODY_SIZE: usize = 64 * 1024 * 1024;
 
