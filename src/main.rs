@@ -50,8 +50,20 @@ fn run(cli: Cli) -> Result<i32> {
             let counting_iter = CountingIterator::new(req_iter);
             let error_count = counting_iter.error_count.clone();
 
+            let filtered_iter: Box<
+                dyn Iterator<Item = mitm2openapi::error::Result<Box<dyn CapturedRequest>>>,
+            > = if args.skip_options {
+                Box::new(counting_iter.filter(|r| {
+                    r.as_ref()
+                        .map(|req| req.get_method().to_uppercase() != "OPTIONS")
+                        .unwrap_or(true)
+                }))
+            } else {
+                Box::new(counting_iter)
+            };
+
             let templates = builder::discover_paths_streaming(
-                counting_iter,
+                filtered_iter,
                 &args.prefix,
                 None,
                 &args.exclude_patterns,
@@ -149,6 +161,7 @@ fn run(cli: Cli) -> Result<i32> {
                 ignore_images: args.ignore_images,
                 suppress_params: args.suppress_params,
                 tags_overrides: args.tags_overrides.clone(),
+                skip_options: args.skip_options,
             };
 
             let mut builder = OpenApiBuilder::new(&args.prefix, &config, active_templates);

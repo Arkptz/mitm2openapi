@@ -661,7 +661,7 @@ mod tests {
             .join("testdata")
             .join("har");
         let requests = read_har_file(&dir).unwrap();
-        assert_eq!(requests.len(), 5);
+        assert_eq!(requests.len(), 7);
     }
 
     #[test]

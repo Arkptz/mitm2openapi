@@ -412,6 +412,10 @@ impl OpenApiBuilder {
         let url = request.get_url();
         let method = request.get_method().to_uppercase();
 
+        if self.config.skip_options && method == "OPTIONS" {
+            return;
+        }
+
         if !matches!(
             method.as_str(),
             "GET" | "PUT" | "POST" | "DELETE" | "OPTIONS" | "HEAD" | "PATCH" | "TRACE"
@@ -697,6 +701,7 @@ mod tests {
             ignore_images: false,
             suppress_params: false,
             tags_overrides: None,
+            skip_options: false,
         }
     }
 

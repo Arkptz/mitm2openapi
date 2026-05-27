@@ -23,4 +23,5 @@ pub struct Config {
     pub ignore_images: bool,
     pub suppress_params: bool,
     pub tags_overrides: Option<String>,
+    pub skip_options: bool,
 }
