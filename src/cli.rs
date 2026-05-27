@@ -80,6 +80,9 @@ pub struct DiscoverArgs {
     #[arg(long, value_parser = parse_byte_size, default_value = "2GiB")]
     pub max_input_size: u64,
 
+    #[arg(long, value_parser = parse_byte_size, default_value = "256MiB")]
+    pub max_payload_size: u64,
+
     #[arg(long, default_value_t = false)]
     pub allow_symlinks: bool,
 

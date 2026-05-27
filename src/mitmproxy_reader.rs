@@ -370,14 +370,15 @@ fn parse_flow(flow: &TNetValue) -> Result<MitmproxyFlowWrapper> {
 
 pub fn stream_mitmproxy_file(
     path: &Path,
+    max_payload_size: usize,
 ) -> Result<impl Iterator<Item = Result<Box<dyn CapturedRequest>>>> {
     let file = std::fs::File::open(path)?;
     let reader = std::io::BufReader::with_capacity(64 * 1024, file);
     let display_path = path.display().to_string();
 
     Ok(
-        tnetstring::TNetStringIter::new(reader).filter_map(
-            move |value_result| match value_result {
+        tnetstring::TNetStringIter::with_limits(reader, max_payload_size, crate::MAX_DEPTH)
+            .filter_map(move |value_result| match value_result {
                 Ok(flow) => {
                     let flow_type = flow.get("type").and_then(value_to_string);
                     if flow_type.as_deref() != Some("http") {
@@ -396,20 +397,26 @@ pub fn stream_mitmproxy_file(
                     warn!(path = %display_path, error = %e, "Skipping unparseable flow entry");
                     Some(Err(e))
                 }
-            },
-        ),
+            }),
     )
 }
 
-pub fn stream_mitmproxy_dir(path: &Path) -> Result<RequestIter> {
-    stream_mitmproxy_dir_inner(path, false)
+pub fn stream_mitmproxy_dir(path: &Path, max_payload_size: usize) -> Result<RequestIter> {
+    stream_mitmproxy_dir_inner(path, false, max_payload_size)
 }
 
-pub fn stream_mitmproxy_dir_no_symlinks(path: &Path) -> Result<RequestIter> {
-    stream_mitmproxy_dir_inner(path, true)
+pub fn stream_mitmproxy_dir_no_symlinks(
+    path: &Path,
+    max_payload_size: usize,
+) -> Result<RequestIter> {
+    stream_mitmproxy_dir_inner(path, true, max_payload_size)
 }
 
-fn stream_mitmproxy_dir_inner(path: &Path, reject_symlinks: bool) -> Result<RequestIter> {
+fn stream_mitmproxy_dir_inner(
+    path: &Path,
+    reject_symlinks: bool,
+    max_payload_size: usize,
+) -> Result<RequestIter> {
     let mut entries: Vec<_> = std::fs::read_dir(path)?
         .filter_map(|e| match e {
             Ok(entry) => Some(entry),
@@ -449,7 +456,7 @@ fn stream_mitmproxy_dir_inner(path: &Path, reject_symlinks: bool) -> Result<Requ
 
     let mut iters: Vec<RequestIter> = Vec::new();
     for entry in entries {
-        match stream_mitmproxy_file(&entry.path()) {
+        match stream_mitmproxy_file(&entry.path(), max_payload_size) {
             Ok(iter) => iters.push(Box::new(iter)),
             Err(e) => {
                 warn!(path = %entry.path().display(), error = %e, "Skipping unreadable flow file");
@@ -461,13 +468,15 @@ fn stream_mitmproxy_dir_inner(path: &Path, reject_symlinks: bool) -> Result<Requ
 }
 
 pub fn read_mitmproxy_file(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
-    Ok(stream_mitmproxy_file(path)?
+    Ok(stream_mitmproxy_file(path, crate::MAX_PAYLOAD_SIZE)?
         .filter_map(|r| r.ok())
         .collect())
 }
 
 pub fn read_mitmproxy_dir(path: &Path) -> Result<Vec<Box<dyn CapturedRequest>>> {
-    Ok(stream_mitmproxy_dir(path)?.filter_map(|r| r.ok()).collect())
+    Ok(stream_mitmproxy_dir(path, crate::MAX_PAYLOAD_SIZE)?
+        .filter_map(|r| r.ok())
+        .collect())
 }
 
 /// Heuristic: does this file look like a mitmproxy flow dump?

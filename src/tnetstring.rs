@@ -136,6 +136,23 @@ impl<R: Read> TrackingReader<R> {
         }
     }
 
+    #[allow(clippy::indexing_slicing)] // to_read = remaining.min(buf.len()) guarantees in-bounds
+    fn skip_bytes(&mut self, count: usize) -> Result<(), Error> {
+        let mut remaining = count;
+        let mut buf = [0u8; 8192];
+        while remaining > 0 {
+            let to_read = remaining.min(buf.len());
+            // SAFETY: to_read <= buf.len() guaranteed by min()
+            let slice = &mut buf[..to_read];
+            self.inner.read_exact(slice).map_err(|e| {
+                self.make_error(format!("unexpected end of input during skip: {e}"))
+            })?;
+            remaining -= to_read;
+        }
+        self.offset += count;
+        Ok(())
+    }
+
     fn make_error(&self, message: String) -> Error {
         Error::TNetParse {
             offset: self.offset,
@@ -468,6 +485,22 @@ impl<R: Read> Iterator for TNetStringIter<R> {
             Ok(None) => {
                 self.done = true;
                 None
+            }
+            Err(Error::TNetStringPayloadTooLarge { len, max }) => {
+                warn!(
+                    event = "tnetstring_entry_skipped",
+                    byte_offset = self.reader.offset,
+                    payload_len = len,
+                    max_payload = max,
+                    "skipping oversized tnetstring entry and continuing"
+                );
+                // Reader is positioned after the colon, before the data.
+                // Skip data (len bytes) + tag (1 byte) to reach the next entry.
+                if let Err(skip_err) = self.reader.skip_bytes(len + 1) {
+                    self.done = true;
+                    return Some(Err(skip_err));
+                }
+                Some(Err(Error::TNetStringPayloadTooLarge { len, max }))
             }
             Err(e) => {
                 let error_kind = classify_error_kind(&e);

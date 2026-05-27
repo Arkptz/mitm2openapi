@@ -45,6 +45,7 @@ fn run(cli: Cli) -> Result<i32> {
                 &args.format,
                 args.max_input_size,
                 args.allow_symlinks,
+                args.max_payload_size as usize,
             )?;
 
             let counting_iter = CountingIterator::new(req_iter);
@@ -141,6 +142,7 @@ fn run(cli: Cli) -> Result<i32> {
                 &args.format,
                 args.max_input_size,
                 args.allow_symlinks,
+                args.max_payload_size as usize,
             )?;
 
             let all_templates = load_templates(&args.templates).with_context(|| {
@@ -298,6 +300,7 @@ fn stream_input(
     format: &InputFormat,
     max_input_size: u64,
     allow_symlinks: bool,
+    max_payload_size: usize,
 ) -> Result<RequestIter> {
     // Check symlink-ness before is_dir(), since is_dir() follows symlinks.
     if !allow_symlinks {
@@ -320,13 +323,13 @@ fn stream_input(
             debug!(path = %path.display(), "Streaming as mitmproxy format");
             if path.is_dir() {
                 if reject_symlinks {
-                    mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(path)
+                    mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(path, max_payload_size)
                 } else {
-                    mitmproxy_reader::stream_mitmproxy_dir(path)
+                    mitmproxy_reader::stream_mitmproxy_dir(path, max_payload_size)
                 }
                 .context("failed to stream mitmproxy directory")
             } else {
-                let iter = mitmproxy_reader::stream_mitmproxy_file(path)
+                let iter = mitmproxy_reader::stream_mitmproxy_file(path, max_payload_size)
                     .context("failed to stream mitmproxy file")?;
                 Ok(Box::new(iter))
             }
@@ -340,9 +343,9 @@ fn stream_input(
             if path.is_dir() {
                 debug!(path = %path.display(), "Auto-detecting format for directory");
                 let mitmproxy_result = if reject_symlinks {
-                    mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(path)
+                    mitmproxy_reader::stream_mitmproxy_dir_no_symlinks(path, max_payload_size)
                 } else {
-                    mitmproxy_reader::stream_mitmproxy_dir(path)
+                    mitmproxy_reader::stream_mitmproxy_dir(path, max_payload_size)
                 };
                 let har_result = if reject_symlinks {
                     har_reader::stream_har_dir_no_symlinks(path)
@@ -372,7 +375,7 @@ fn stream_input(
 
                 if ms > hs {
                     info!(path = %path.display(), "Auto-detected as mitmproxy format");
-                    let iter = mitmproxy_reader::stream_mitmproxy_file(path)
+                    let iter = mitmproxy_reader::stream_mitmproxy_file(path, max_payload_size)
                         .context("detected as mitmproxy format but failed to parse")?;
                     Ok(Box::new(iter))
                 } else if hs > ms {
@@ -382,7 +385,7 @@ fn stream_input(
                     Ok(Box::new(iter))
                 } else if ms > 0 {
                     warn!(path = %path.display(), "Ambiguous format detection, trying mitmproxy first");
-                    match mitmproxy_reader::stream_mitmproxy_file(path) {
+                    match mitmproxy_reader::stream_mitmproxy_file(path, max_payload_size) {
                         Ok(iter) => Ok(Box::new(iter)),
                         Err(_) => {
                             let iter = har_reader::stream_har_file(path)
