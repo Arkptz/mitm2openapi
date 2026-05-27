@@ -1,0 +1,6 @@
+rules:
+  - match: "^/api/v1/contract/"
+    tag: Contract
+  - match: "^/api/v1/private/"
+    tag: Private
+default: Default
