@@ -20,6 +20,7 @@
 
 pub mod builder;
 pub mod cli;
+pub mod envelope;
 pub mod error;
 pub mod har_reader;
 pub mod mitmproxy_reader;
