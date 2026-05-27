@@ -1837,11 +1837,8 @@ mod tests {
         let rb = op.request_body.as_ref().unwrap().as_item().unwrap();
         let mt = rb.content.get("application/json").unwrap();
         let schema = mt.schema.as_ref().unwrap().as_item().unwrap();
-        match &schema.schema_kind {
-            openapiv3::SchemaKind::OneOf { .. } => {
-                panic!("identical schemas should NOT produce oneOf");
-            }
-            _ => {}
+        if let openapiv3::SchemaKind::OneOf { .. } = &schema.schema_kind {
+            panic!("identical schemas should NOT produce oneOf");
         }
     }
 
