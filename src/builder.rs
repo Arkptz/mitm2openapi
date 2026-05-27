@@ -585,7 +585,7 @@ impl OpenApiBuilder {
                             let schema = schema::value_to_schema(&val);
                             let mut incoming_content = IndexMap::new();
                             incoming_content.insert(
-                                media_type_str,
+                                media_type_str.clone(),
                                 MediaType {
                                     schema: Some(ReferenceOr::Item(schema)),
                                     ..MediaType::default()
@@ -605,6 +605,13 @@ impl OpenApiBuilder {
                                     op.request_body = Some(ReferenceOr::Item(incoming_rb));
                                 }
                             }
+
+                            let req_key = (template_path.clone(), method.clone(), media_type_str);
+                            let req_entries = self.req_examples_store.entry(req_key).or_default();
+                            let existing_names: Vec<String> =
+                                req_entries.iter().map(|(n, _)| n.clone()).collect();
+                            let name = make_example_name(&val, &existing_names);
+                            req_entries.push((name, val));
                         }
                     }
                 }
@@ -655,7 +662,7 @@ impl OpenApiBuilder {
                 let schema = schema::value_to_schema(&val);
                 let mut content = IndexMap::new();
                 content.insert(
-                    media_type_str,
+                    media_type_str.clone(),
                     MediaType {
                         schema: Some(ReferenceOr::Item(schema)),
                         ..MediaType::default()
@@ -666,6 +673,13 @@ impl OpenApiBuilder {
                     required: true,
                     ..RequestBody::default()
                 }));
+
+                let req_key = (template_path.clone(), method.clone(), media_type_str);
+                let req_entries = self.req_examples_store.entry(req_key).or_default();
+                let existing_names: Vec<String> =
+                    req_entries.iter().map(|(n, _)| n.clone()).collect();
+                let name = make_example_name(&val, &existing_names);
+                req_entries.push((name, val));
             }
         }
 
@@ -715,6 +729,31 @@ impl OpenApiBuilder {
                 continue;
             };
             let Some(media_type) = resp.content.values_mut().next() else {
+                continue;
+            };
+            let mut ex_map: IndexMap<String, ReferenceOr<Example>> = IndexMap::new();
+            for (name, value) in examples {
+                ex_map.insert(
+                    name,
+                    ReferenceOr::Item(Example {
+                        value: Some(value),
+                        ..Example::default()
+                    }),
+                );
+            }
+            media_type.examples = ex_map;
+        }
+        for ((path, method, content_type), examples) in self.req_examples_store.drain() {
+            let Some(ReferenceOr::Item(path_item)) = self.spec.paths.paths.get_mut(&path) else {
+                continue;
+            };
+            let Some(Some(op)) = get_operation_mut(path_item, &method).map(|s| s.as_mut()) else {
+                continue;
+            };
+            let Some(ReferenceOr::Item(rb)) = op.request_body.as_mut() else {
+                continue;
+            };
+            let Some(media_type) = rb.content.get_mut(&content_type) else {
                 continue;
             };
             let mut ex_map: IndexMap<String, ReferenceOr<Example>> = IndexMap::new();
