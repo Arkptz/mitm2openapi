@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::path::Path;
 
 use tracing::{debug, warn};
@@ -153,6 +154,42 @@ fn find_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a st
         .map(|(_, v)| v.as_str())
 }
 
+fn decompress_body(body: &[u8], encoding: Option<&str>) -> Vec<u8> {
+    match encoding {
+        Some("br") => {
+            let mut decoded = Vec::new();
+            match brotli::Decompressor::new(body, 4096).read_to_end(&mut decoded) {
+                Ok(_) => decoded,
+                Err(_) => {
+                    warn!(event = "decompress_failed", encoding = ?encoding, "decompression failed, using raw bytes");
+                    body.to_vec()
+                }
+            }
+        }
+        Some("gzip") => {
+            let mut decoded = Vec::new();
+            match flate2::read::GzDecoder::new(body).read_to_end(&mut decoded) {
+                Ok(_) => decoded,
+                Err(_) => {
+                    warn!(event = "decompress_failed", encoding = ?encoding, "decompression failed, using raw bytes");
+                    body.to_vec()
+                }
+            }
+        }
+        Some("deflate") => {
+            let mut decoded = Vec::new();
+            match flate2::read::DeflateDecoder::new(body).read_to_end(&mut decoded) {
+                Ok(_) => decoded,
+                Err(_) => {
+                    warn!(event = "decompress_failed", encoding = ?encoding, "decompression failed, using raw bytes");
+                    body.to_vec()
+                }
+            }
+        }
+        _ => body.to_vec(),
+    }
+}
+
 /// Resolve hostname: host field → Host header → authority field.
 fn resolve_host(request: &TNetValue, headers: &[(String, String)]) -> Option<String> {
     if let Some(host) = request.get("host").and_then(value_to_string_strict) {
@@ -269,11 +306,12 @@ fn parse_flow(flow: &TNetValue) -> Result<MitmproxyFlowWrapper> {
 
     let url = build_url_with_fallback(request, &request_headers)?;
 
+    let request_encoding = find_header(&request_headers, "content-encoding").map(|v| v.to_string());
     let request_body = request
         .get("content")
         .and_then(|v| if v.is_null() { None } else { v.as_bytes() })
         .filter(|b| !b.is_empty())
-        .map(|b| cap_body(b, &url));
+        .map(|b| cap_body(&decompress_body(b, request_encoding.as_deref()), &url));
 
     let response = flow.get("response");
 
@@ -301,11 +339,14 @@ fn parse_flow(flow: &TNetValue) -> Result<MitmproxyFlowWrapper> {
                 );
             let reason = resp.get("reason").and_then(value_to_string);
             let headers = resp.get("headers").map(parse_headers);
+            let response_encoding = headers
+                .as_ref()
+                .and_then(|h| find_header(h, "content-encoding").map(|v| v.to_string()));
             let body = resp
                 .get("content")
                 .and_then(|v| if v.is_null() { None } else { v.as_bytes() })
                 .filter(|b| !b.is_empty())
-                .map(|b| cap_body(b, &url));
+                .map(|b| cap_body(&decompress_body(b, response_encoding.as_deref()), &url));
             let content_type = headers
                 .as_ref()
                 .and_then(|h| find_header(h, "content-type").map(|v| v.to_string()));
@@ -960,5 +1001,62 @@ mod tests {
             !wrapper.url.contains('\x00'),
             "null byte should not be in URL"
         );
+    }
+
+    #[test]
+    fn decompress_body_brotli() {
+        use brotli::enc::BrotliCompress;
+        let original = b"hello brotli world";
+        let mut compressed = Vec::new();
+        BrotliCompress(
+            &mut &original[..],
+            &mut compressed,
+            &brotli::enc::BrotliEncoderParams::default(),
+        )
+        .unwrap();
+        let decoded = decompress_body(&compressed, Some("br"));
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn decompress_body_gzip() {
+        use flate2::write::GzEncoder;
+        use std::io::Write;
+        let original = b"hello gzip world";
+        let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(original).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let decoded = decompress_body(&compressed, Some("gzip"));
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn decompress_body_deflate() {
+        use flate2::write::DeflateEncoder;
+        use std::io::Write;
+        let original = b"hello deflate world";
+        let mut encoder = DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(original).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let decoded = decompress_body(&compressed, Some("deflate"));
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn decompress_body_invalid_data_fallback() {
+        let garbage = b"not valid compressed data at all";
+        let decoded = decompress_body(garbage, Some("gzip"));
+        assert_eq!(
+            decoded, garbage,
+            "invalid data should fall back to raw bytes"
+        );
+    }
+
+    #[test]
+    fn decompress_body_no_encoding_passthrough() {
+        let raw = b"plain text body";
+        assert_eq!(decompress_body(raw, None), raw);
+        assert_eq!(decompress_body(raw, Some("identity")), raw);
+        assert_eq!(decompress_body(raw, Some("unknown")), raw);
     }
 }
