@@ -343,6 +343,24 @@ fn merge_response_content(existing: &mut Response, incoming: &Response) {
     }
 }
 
+fn merge_request_body_content(existing: &mut RequestBody, incoming: &RequestBody) {
+    for (media_type, incoming_mt) in &incoming.content {
+        if let Some(existing_mt) = existing.content.get_mut(media_type) {
+            let existing_schema = existing_mt.schema.take();
+            let incoming_schema = incoming_mt.schema.clone();
+            existing_mt.schema = match (existing_schema, incoming_schema) {
+                (Some(a), Some(b)) => Some(merge_schemas_one_of(a, b)),
+                (Some(a), None) => Some(a),
+                (None, b) => b,
+            };
+        } else {
+            existing
+                .content
+                .insert(media_type.clone(), incoming_mt.clone());
+        }
+    }
+}
+
 fn merge_schemas_one_of(
     a: ReferenceOr<openapiv3::Schema>,
     b: ReferenceOr<openapiv3::Schema>,
@@ -548,6 +566,40 @@ impl OpenApiBuilder {
                         op.responses
                             .responses
                             .insert(sc, ReferenceOr::Item(new_response));
+                    }
+
+                    if let Some(req_body) = request.get_request_body() {
+                        let req_ct = request
+                            .get_request_headers()
+                            .iter()
+                            .find(|(k, _)| k.to_lowercase() == "content-type")
+                            .map(|(_, v)| v.as_str());
+
+                        if let Some((media_type_str, val)) = parse_body(req_body, req_ct) {
+                            let schema = schema::value_to_schema(&val);
+                            let mut incoming_content = IndexMap::new();
+                            incoming_content.insert(
+                                media_type_str,
+                                MediaType {
+                                    schema: Some(ReferenceOr::Item(schema)),
+                                    ..MediaType::default()
+                                },
+                            );
+                            let incoming_rb = RequestBody {
+                                content: incoming_content,
+                                required: true,
+                                ..RequestBody::default()
+                            };
+
+                            match &mut op.request_body {
+                                Some(ReferenceOr::Item(existing_rb)) => {
+                                    merge_request_body_content(existing_rb, &incoming_rb);
+                                }
+                                _ => {
+                                    op.request_body = Some(ReferenceOr::Item(incoming_rb));
+                                }
+                            }
+                        }
                     }
                 }
                 return;
@@ -1649,6 +1701,108 @@ mod tests {
         );
     }
 
+    // ── request body merge ───────────────────────────────────────────
+
+    #[test]
+    fn request_body_merge_different_schemas() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req1 = MockRequest::post("https://api.example.com/items")
+            .with_json_request_body(&serde_json::json!({"name": "Alice"}));
+        let req2 = MockRequest::post("https://api.example.com/items")
+            .with_json_request_body(&serde_json::json!({"age": 30}));
+
+        builder.add_request(&req1);
+        builder.add_request(&req2);
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths["/items"].as_item().unwrap();
+        let op = path_item.post.as_ref().unwrap();
+        let rb = op.request_body.as_ref().unwrap().as_item().unwrap();
+        let mt = rb.content.get("application/json").unwrap();
+        let schema = mt.schema.as_ref().unwrap().as_item().unwrap();
+        match &schema.schema_kind {
+            openapiv3::SchemaKind::OneOf { one_of } => {
+                assert_eq!(one_of.len(), 2);
+            }
+            _ => panic!("expected oneOf schema"),
+        }
+    }
+
+    #[test]
+    fn request_body_merge_identical_schemas() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req1 = MockRequest::post("https://api.example.com/items")
+            .with_json_request_body(&serde_json::json!({"name": "Alice"}));
+        let req2 = MockRequest::post("https://api.example.com/items")
+            .with_json_request_body(&serde_json::json!({"name": "Bob"}));
+
+        builder.add_request(&req1);
+        builder.add_request(&req2);
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths["/items"].as_item().unwrap();
+        let op = path_item.post.as_ref().unwrap();
+        let rb = op.request_body.as_ref().unwrap().as_item().unwrap();
+        let mt = rb.content.get("application/json").unwrap();
+        let schema = mt.schema.as_ref().unwrap().as_item().unwrap();
+        match &schema.schema_kind {
+            openapiv3::SchemaKind::OneOf { .. } => {
+                panic!("identical schemas should NOT produce oneOf");
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn request_body_first_no_body_second_has_body() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req1 = MockRequest::post("https://api.example.com/items");
+        let req2 = MockRequest::post("https://api.example.com/items")
+            .with_json_request_body(&serde_json::json!({"name": "Alice"}));
+
+        builder.add_request(&req1);
+        builder.add_request(&req2);
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths["/items"].as_item().unwrap();
+        let op = path_item.post.as_ref().unwrap();
+        let rb = op.request_body.as_ref().unwrap().as_item().unwrap();
+        let mt = rb.content.get("application/json").unwrap();
+        assert!(mt.schema.is_some());
+    }
+
+    #[test]
+    fn request_body_different_content_types_separate() {
+        let config = test_config();
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, vec![]);
+
+        let req1 = MockRequest::post("https://api.example.com/items")
+            .with_json_request_body(&serde_json::json!({"name": "Alice"}));
+        let mut req2 = MockRequest::post("https://api.example.com/items");
+        req2.request_headers = vec![(
+            "Content-Type".to_string(),
+            "application/x-www-form-urlencoded".to_string(),
+        )];
+        req2.request_body = Some(b"name=Bob&age=30".to_vec());
+
+        builder.add_request(&req1);
+        builder.add_request(&req2);
+
+        let spec = builder.build();
+        let path_item = spec.paths.paths["/items"].as_item().unwrap();
+        let op = path_item.post.as_ref().unwrap();
+        let rb = op.request_body.as_ref().unwrap().as_item().unwrap();
+        assert!(rb.content.contains_key("application/json"));
+        assert!(rb.content.contains_key("application/x-www-form-urlencoded"));
+        assert_eq!(rb.content.len(), 2);
+    }
+
     // ── examples accumulator ───────────────────────────────────────
 
     #[test]
@@ -1714,5 +1868,102 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn response_examples_multiple_captures() {
+        let config = test_config();
+        let templates = vec!["/users/{id}".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, templates);
+
+        for i in 1..=3 {
+            let req = MockRequest::get(&format!("https://api.example.com/users/{i}"))
+                .with_json_response(&serde_json::json!({"id": i, "name": format!("User{i}")}));
+            builder.add_request(&req);
+        }
+
+        let spec = builder.build();
+        let path_item = match spec.paths.paths.get("/users/{id}") {
+            Some(ReferenceOr::Item(item)) => item,
+            _ => panic!("expected /users/{{id}}"),
+        };
+        let op = path_item.get.as_ref().unwrap();
+        let resp = match op.responses.responses.get(&StatusCode::Code(200)) {
+            Some(ReferenceOr::Item(r)) => r,
+            _ => panic!("expected 200 response"),
+        };
+        let mt = resp
+            .content
+            .get("application/json")
+            .expect("expected json media type");
+        assert_eq!(mt.examples.len(), 3, "should have 3 named examples");
+    }
+
+    #[test]
+    fn response_examples_non_json_skipped() {
+        let config = test_config();
+        let templates = vec!["/health".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, templates);
+
+        let req = MockRequest {
+            url: "https://api.example.com/health".to_string(),
+            method: "GET".to_string(),
+            request_headers: vec![],
+            request_body: None,
+            response_status: Some(200),
+            response_reason: Some("OK".to_string()),
+            response_headers: None,
+            response_body: Some(b"OK".to_vec()),
+            response_content_type: Some("text/plain".to_string()),
+        };
+        builder.add_request(&req);
+
+        let spec = builder.build();
+        let path_item = match spec.paths.paths.get("/health") {
+            Some(ReferenceOr::Item(item)) => item,
+            _ => return,
+        };
+        if let Some(op) = &path_item.get {
+            for (_, resp_ref) in &op.responses.responses {
+                if let ReferenceOr::Item(resp) = resp_ref {
+                    for (_, mt) in &resp.content {
+                        assert!(mt.examples.is_empty(), "text/plain should have no examples");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn response_examples_duplicate_names_get_suffix() {
+        let config = test_config();
+        let templates = vec!["/items".to_string()];
+        let mut builder = OpenApiBuilder::new("https://api.example.com", &config, templates);
+
+        let req1 = MockRequest::get("https://api.example.com/items")
+            .with_json_response(&serde_json::json!({"status": "active", "count": 1}));
+        let req2 = MockRequest::get("https://api.example.com/items")
+            .with_json_response(&serde_json::json!({"status": "active", "count": 2}));
+        builder.add_request(&req1);
+        builder.add_request(&req2);
+
+        let spec = builder.build();
+        let path_item = match spec.paths.paths.get("/items") {
+            Some(ReferenceOr::Item(item)) => item,
+            _ => panic!("expected /items"),
+        };
+        let op = path_item.get.as_ref().unwrap();
+        let resp = match op.responses.responses.get(&StatusCode::Code(200)) {
+            Some(ReferenceOr::Item(r)) => r,
+            _ => panic!("expected 200 response"),
+        };
+        let mt = resp
+            .content
+            .get("application/json")
+            .expect("expected json media type");
+        assert_eq!(mt.examples.len(), 2, "should have 2 examples");
+        let names: Vec<&String> = mt.examples.keys().collect();
+        assert_eq!(names[0], "active");
+        assert_eq!(names[1], "active_2");
     }
 }
