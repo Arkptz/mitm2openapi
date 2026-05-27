@@ -29,6 +29,7 @@ pub mod path_matching;
 pub mod redact;
 pub mod report;
 pub mod schema;
+pub mod tag_rules;
 pub mod tnetstring;
 pub(crate) mod type_hints;
 pub mod types;
