@@ -3,7 +3,7 @@ use openapiv3::{
     Example, Info, MediaType, OpenAPI, Operation, PathItem, Paths, ReferenceOr, RequestBody,
     Response, Responses, Server, StatusCode,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tracing::{debug, warn};
 
 use crate::params;
@@ -147,8 +147,8 @@ pub struct OpenApiBuilder {
     tags_overrides: Option<serde_json::Map<String, serde_json::Value>>,
     compiled_templates: path_matching::CompiledTemplates,
     spec: OpenAPI,
-    examples_store: HashMap<(String, String, u16), Vec<(String, serde_json::Value)>>,
-    req_examples_store: HashMap<(String, String, String), Vec<(String, serde_json::Value)>>,
+    examples_store: BTreeMap<(String, String, u16), Vec<(String, serde_json::Value)>>,
+    req_examples_store: BTreeMap<(String, String, String), Vec<(String, serde_json::Value)>>,
     max_examples: usize,
     redactor: Option<crate::redact::Redactor>,
     operation_id_strategy: crate::operation_id::OperationIdStrategy,
@@ -505,8 +505,8 @@ impl OpenApiBuilder {
             tags_overrides,
             compiled_templates,
             spec,
-            examples_store: HashMap::new(),
-            req_examples_store: HashMap::new(),
+            examples_store: BTreeMap::new(),
+            req_examples_store: BTreeMap::new(),
             max_examples: config.max_examples,
             redactor,
             operation_id_strategy,
@@ -945,7 +945,7 @@ impl OpenApiBuilder {
                 }
             }
         }
-        for ((path, method, status), examples) in self.examples_store.drain() {
+        for ((path, method, status), examples) in self.examples_store.into_iter() {
             let Some(ReferenceOr::Item(path_item)) = self.spec.paths.paths.get_mut(&path) else {
                 continue;
             };
@@ -985,7 +985,7 @@ impl OpenApiBuilder {
             }
             media_type.examples = ex_map;
         }
-        for ((path, method, content_type), examples) in self.req_examples_store.drain() {
+        for ((path, method, content_type), examples) in self.req_examples_store.into_iter() {
             let Some(ReferenceOr::Item(path_item)) = self.spec.paths.paths.get_mut(&path) else {
                 continue;
             };
@@ -1023,6 +1023,13 @@ impl OpenApiBuilder {
             }
             media_type.examples = ex_map;
         }
+
+        self.spec.paths.paths.sort_keys();
+
+        if let Some(ref mut components) = self.spec.components {
+            components.schemas.sort_keys();
+        }
+
         self.spec
     }
 }
