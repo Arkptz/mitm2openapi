@@ -5,7 +5,7 @@ use clap::Parser;
 use tracing::{debug, info, warn};
 
 use mitm2openapi::builder::{self, OpenApiBuilder};
-use mitm2openapi::cli::{Cli, Command, InputFormat};
+use mitm2openapi::cli::{Cli, Command, InputFormat, OperationIdStrategyArg, TagStrategyArg};
 use mitm2openapi::har_reader;
 use mitm2openapi::mitmproxy_reader;
 use mitm2openapi::output;
@@ -127,6 +127,7 @@ fn run(cli: Cli) -> Result<i32> {
             check_strict(strict, &report)
         }
         Command::Generate(args) => {
+            let args = *args;
             info!(input = %args.input.display(), output = %args.output.display(), "Starting generation");
 
             let strict = args.strict;
@@ -162,6 +163,57 @@ fn run(cli: Cli) -> Result<i32> {
 
             info!(count = active_templates.len(), "Using active templates");
 
+            let tag_strategy = match &args.tag_strategy {
+                TagStrategyArg::Legacy => mitm2openapi::tag_rules::TagStrategy::Legacy,
+                TagStrategyArg::None => mitm2openapi::tag_rules::TagStrategy::None,
+                TagStrategyArg::PathSegment => {
+                    let index = args.tag_segment_index.unwrap_or(0);
+                    mitm2openapi::tag_rules::TagStrategy::PathSegment { index }
+                }
+                TagStrategyArg::Rules => {
+                    let rules_path = args
+                        .tag_rules
+                        .as_ref()
+                        .context("--tag-rules path required when --tag-strategy=rules")?;
+                    mitm2openapi::tag_rules::load_tag_rules(rules_path)
+                        .context("failed to load tag rules")?
+                }
+            };
+
+            let tag_strategy = if let Some(rules_path) = &args.tag_rules {
+                if matches!(args.tag_strategy, TagStrategyArg::Legacy) {
+                    mitm2openapi::tag_rules::load_tag_rules(rules_path)
+                        .context("failed to load tag rules")?
+                } else {
+                    tag_strategy
+                }
+            } else {
+                tag_strategy
+            };
+
+            let operation_id_overrides: std::collections::HashMap<String, String> =
+                if let Some(overrides_path) = &args.operation_id_overrides {
+                    mitm2openapi::operation_id::load_overrides(overrides_path)
+                        .context("failed to load operationId overrides")?
+                } else {
+                    std::collections::HashMap::new()
+                };
+
+            let operation_id_strategy = match &args.operation_id_strategy {
+                OperationIdStrategyArg::None => {
+                    mitm2openapi::operation_id::OperationIdStrategy::None
+                }
+                OperationIdStrategyArg::Path => {
+                    mitm2openapi::operation_id::OperationIdStrategy::Path
+                }
+                OperationIdStrategyArg::Template => {
+                    let tmpl = args.operation_id_template.clone().context(
+                        "--operation-id-template required when --operation-id-strategy=template",
+                    )?;
+                    mitm2openapi::operation_id::OperationIdStrategy::Template(tmpl)
+                }
+            };
+
             let config = Config {
                 prefix: args.prefix.clone(),
                 openapi_title: args.openapi_title.clone(),
@@ -176,6 +228,9 @@ fn run(cli: Cli) -> Result<i32> {
                 max_examples: args.max_examples,
                 redact_patterns: args.redact_patterns.clone(),
                 redact_fields: args.redact_fields.clone(),
+                tag_strategy,
+                operation_id_strategy,
+                operation_id_overrides,
             };
 
             let mut builder = OpenApiBuilder::new(&args.prefix, &config, active_templates);

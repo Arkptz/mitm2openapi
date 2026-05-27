@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Strategy for generating operationId values.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum OperationIdStrategy {
     /// Do not generate operationId.
+    #[default]
     None,
     /// Derive operationId from HTTP method + path template.
     Path,

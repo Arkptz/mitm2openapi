@@ -80,18 +80,9 @@ impl CapturedRequest for MockRequest {
 fn test_config() -> Config {
     Config {
         prefix: "https://api.example.com".to_string(),
-        openapi_title: None,
         openapi_version: "1.0.0".to_string(),
-        exclude_headers: vec![],
-        exclude_cookies: vec![],
-        include_headers: false,
-        ignore_images: false,
-        suppress_params: false,
-        tags_overrides: None,
-        skip_options: false,
         max_examples: 5,
-        redact_patterns: vec![],
-        redact_fields: vec![],
+        ..Default::default()
     }
 }
 

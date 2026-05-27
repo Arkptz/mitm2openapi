@@ -3,14 +3,17 @@ use regex::Regex;
 use serde::Deserialize;
 use std::path::Path;
 
+#[derive(Debug, Clone)]
 pub struct TagRule {
     pub pattern: Regex,
     pub tag: String,
 }
 
 /// Strategy for assigning tags to API operations.
+#[derive(Debug, Clone, Default)]
 pub enum TagStrategy {
     /// Default: the builder calls its own `extract_tag()` logic.
+    #[default]
     Legacy,
     /// Suppress all tags (empty `tags: []` on every operation).
     None,

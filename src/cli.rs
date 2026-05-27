@@ -15,7 +15,7 @@ pub enum Command {
     /// Discover API endpoints from captured traffic and produce a templates file
     Discover(DiscoverArgs),
     /// Generate an OpenAPI specification from captured traffic using a templates file
-    Generate(GenerateArgs),
+    Generate(Box<GenerateArgs>),
 }
 
 /// Input format for traffic captures
@@ -28,6 +28,32 @@ pub enum InputFormat {
     Har,
     /// mitmproxy flow dump format
     Mitmproxy,
+}
+
+/// Tag strategy for operations
+#[derive(ValueEnum, Clone, Debug, Default)]
+pub enum TagStrategyArg {
+    /// Default: first non-param path segment (existing behavior)
+    #[default]
+    Legacy,
+    /// Suppress all tags
+    None,
+    /// Extract segment at given index
+    PathSegment,
+    /// Use regex rules file
+    Rules,
+}
+
+/// operationId strategy for operations
+#[derive(ValueEnum, Clone, Debug, Default)]
+pub enum OperationIdStrategyArg {
+    /// Do not generate operationId (default)
+    #[default]
+    None,
+    /// Derive from HTTP method + path
+    Path,
+    /// Use custom template with {method} and {path} placeholders
+    Template,
 }
 
 fn parse_byte_size(s: &str) -> Result<u64, String> {
@@ -191,4 +217,22 @@ pub struct GenerateArgs {
 
     #[arg(long, value_delimiter = ',')]
     pub redact_fields: Vec<String>,
+
+    #[arg(long, value_enum, default_value_t = TagStrategyArg::Legacy)]
+    pub tag_strategy: TagStrategyArg,
+
+    #[arg(long)]
+    pub tag_segment_index: Option<usize>,
+
+    #[arg(long)]
+    pub tag_rules: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = OperationIdStrategyArg::None)]
+    pub operation_id_strategy: OperationIdStrategyArg,
+
+    #[arg(long)]
+    pub operation_id_template: Option<String>,
+
+    #[arg(long)]
+    pub operation_id_overrides: Option<PathBuf>,
 }
