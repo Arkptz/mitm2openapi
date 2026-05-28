@@ -40,18 +40,64 @@ pub fn group_bodies(bodies: &[Value], discriminator: &str) -> (Vec<Value>, Vec<V
 /// Infer an `ApiError` schema from error body examples.
 ///
 /// If `config.error_shape` is set, returns that directly.
-/// Otherwise uses [`crate::schema::value_to_schema`] on the first error body.
-/// Falls back to an empty `Any` schema when no examples exist.
+/// Otherwise merges all error bodies into a single schema using majority-vote
+/// type selection per field. Falls back to an empty `Any` schema when no
+/// examples exist.
 pub fn infer_api_error(error_bodies: &[Value], config: &EnvelopeConfig) -> Schema {
     if let Some(custom) = &config.error_shape {
         return custom.clone();
     }
-    if let Some(first) = error_bodies.first() {
-        return crate::schema::value_to_schema(first);
+    if error_bodies.is_empty() {
+        return Schema {
+            schema_data: SchemaData::default(),
+            schema_kind: SchemaKind::Any(openapiv3::AnySchema::default()),
+        };
     }
-    Schema {
-        schema_data: SchemaData::default(),
-        schema_kind: SchemaKind::Any(openapiv3::AnySchema::default()),
+    merge_error_body_schemas(error_bodies)
+}
+
+/// Merge multiple error body JSON values into a single schema.
+///
+/// For each field across all bodies, picks the representative value whose JSON
+/// type appears most frequently (majority vote), then converts the merged
+/// object to a schema.
+fn merge_error_body_schemas(bodies: &[Value]) -> Schema {
+    use std::collections::HashMap;
+
+    let mut field_values: indexmap::IndexMap<String, Vec<&Value>> = indexmap::IndexMap::new();
+    for body in bodies {
+        if let Value::Object(obj) = body {
+            for (key, val) in obj {
+                field_values.entry(key.clone()).or_default().push(val);
+            }
+        }
+    }
+
+    let mut merged = serde_json::Map::new();
+    for (key, values) in &field_values {
+        let mut type_counts: HashMap<u8, (usize, &Value)> = HashMap::new();
+        for val in values {
+            let disc = json_type_discriminant(val);
+            let entry = type_counts.entry(disc).or_insert((0, val));
+            entry.0 += 1;
+        }
+        if let Some((_, representative)) = type_counts.into_values().max_by_key(|(count, _)| *count)
+        {
+            merged.insert(key.clone(), (*representative).clone());
+        }
+    }
+
+    crate::schema::value_to_schema(&Value::Object(merged))
+}
+
+fn json_type_discriminant(val: &Value) -> u8 {
+    match val {
+        Value::Null => 0,
+        Value::Bool(_) => 1,
+        Value::Number(_) => 2,
+        Value::String(_) => 3,
+        Value::Array(_) => 4,
+        Value::Object(_) => 5,
     }
 }
 
@@ -199,6 +245,27 @@ mod tests {
         let name = success_component_name(None, "/api/v1/users/{id}", "GET", "Success");
         assert!(name.contains("Success"));
         assert!(!name.is_empty());
+    }
+
+    #[test]
+    fn infer_api_error_merges_all_bodies_not_just_first() {
+        let bodies = vec![
+            json!({"success": false, "code": 401, "msg": 0}),
+            json!({"success": false, "code": 401, "msg": "Not logged in"}),
+            json!({"success": false, "code": 401, "msg": "Please login first"}),
+        ];
+        let config = EnvelopeConfig {
+            discriminator_field: "success".to_string(),
+            error_shape: None,
+            success_suffix: "Success".to_string(),
+        };
+        let schema = infer_api_error(&bodies, &config);
+        let yaml = serde_yaml_ng::to_string(&schema).unwrap();
+        assert!(
+            yaml.contains("msg:")
+                && (yaml.contains("type: string") || yaml.contains("- type: string")),
+            "msg must be string (or oneOf with string) when 2/3 samples are string:\n{yaml}"
+        );
     }
 
     #[test]
