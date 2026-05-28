@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(generate)* add `--envelope-success-component-suffix <string>` (default `Success`)
 - *(output)* sort paths and component schemas alphabetically for deterministic YAML output
 
+### Fixed
+
+- *(envelope)* `infer_api_error` now merges all error bodies, not just the first — an outlier `msg: 0` no longer overrides thousands of `msg: "string"` samples
+- *(envelope)* inferred `ApiError` schema now includes the discriminator field pinned with `enum: [false]`
+- *(cli)* `--redact-patterns` no longer splits on `,` — regex quantifiers like `{32,}` now work correctly (pass multiple patterns via repeated flags)
+- *(cli)* invalid `--redact-patterns` regex now hard-fails under `--strict` instead of silently skipping redaction
+
+> Found and fixed by integration testing against a 3.1 GB MEXC capture in mexc-reversed-sdk.
+
 ## [0.6.0](https://github.com/Arkptz/mitm2openapi/compare/v0.5.2...v0.6.0) - 2026-05-27
 
 ### Added
