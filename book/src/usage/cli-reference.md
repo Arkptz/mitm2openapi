@@ -77,7 +77,7 @@ mitm2openapi generate [OPTIONS] -i <INPUT> -t <TEMPLATES> -o <OUTPUT> -p <PREFIX
 | `--report <PATH>` | | Write structured JSON processing report |
 | `--skip-options` | off | Filter out OPTIONS requests from output |
 | `--max-examples <N>` | `5` | Maximum examples per endpoint per status code |
-| `--redact-patterns <PATTERNS>` | | Comma-separated regex patterns to redact from examples |
+| `--redact-patterns <PATTERN>` | | Regex pattern to redact from examples (repeat flag for multiple) |
 | `--redact-fields <FIELDS>` | | Comma-separated field names to redact from examples |
 | `--operation-id-strategy <STRATEGY>` | `none` | Strategy for operationId generation: `none`, `path`, `template` |
 | `--operation-id-template <STRING>` | | Template with `{method}` and `{path}` placeholders (requires `template`) |

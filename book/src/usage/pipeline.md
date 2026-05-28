@@ -201,11 +201,13 @@ mitm2openapi generate \
   -t templates.yaml \
   -o openapi.yaml \
   -p "https://api.example.com" \
-  --redact-patterns 'eyJ[\w-]+,sk-[a-zA-Z0-9]+' \
+  --redact-patterns 'eyJ[\w-]+' \
+  --redact-patterns 'sk-[a-zA-Z0-9]+' \
   --redact-fields 'password,token,secret,authorization'
 ```
 
-`--redact-patterns` accepts comma-separated regexes matched against string values.
+`--redact-patterns` takes one regex per flag — repeat the flag for multiple patterns.
+Regexes with quantifiers like `{32,}` work correctly.
 `--redact-fields` accepts comma-separated field names whose values are replaced with
 `"[REDACTED]"`.
 
