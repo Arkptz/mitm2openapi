@@ -20,15 +20,18 @@
 
 pub mod builder;
 pub mod cli;
+pub mod envelope;
 pub mod error;
 pub mod har_reader;
 pub mod mitmproxy_reader;
+pub mod operation_id;
 pub mod output;
 pub mod params;
 pub mod path_matching;
 pub mod redact;
 pub mod report;
 pub mod schema;
+pub mod tag_rules;
 pub mod tnetstring;
 pub(crate) mod type_hints;
 pub mod types;

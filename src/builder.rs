@@ -3,7 +3,7 @@ use openapiv3::{
     Example, Info, MediaType, OpenAPI, Operation, PathItem, Paths, ReferenceOr, RequestBody,
     Response, Responses, Server, StatusCode,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tracing::{debug, warn};
 
 use crate::params;
@@ -143,13 +143,17 @@ pub fn discover_paths(
 pub struct OpenApiBuilder {
     prefix: String,
     config: Config,
+    tag_strategy: crate::tag_rules::TagStrategy,
     tags_overrides: Option<serde_json::Map<String, serde_json::Value>>,
     compiled_templates: path_matching::CompiledTemplates,
     spec: OpenAPI,
-    examples_store: HashMap<(String, String, u16), Vec<(String, serde_json::Value)>>,
-    req_examples_store: HashMap<(String, String, String), Vec<(String, serde_json::Value)>>,
+    examples_store: BTreeMap<(String, String, u16), Vec<(String, serde_json::Value)>>,
+    req_examples_store: BTreeMap<(String, String, String), Vec<(String, serde_json::Value)>>,
     max_examples: usize,
     redactor: Option<crate::redact::Redactor>,
+    operation_id_strategy: crate::operation_id::OperationIdStrategy,
+    operation_id_overrides: HashMap<String, String>,
+    envelope_config: Option<crate::envelope::EnvelopeConfig>,
 }
 
 fn extract_tag(
@@ -292,6 +296,20 @@ fn parse_body(body: &[u8], content_type: Option<&str>) -> Option<(String, serde_
     }
 
     None
+}
+
+fn get_operation_ref<'a>(path_item: &'a PathItem, method: &str) -> Option<&'a Option<Operation>> {
+    match method.to_uppercase().as_str() {
+        "GET" => Some(&path_item.get),
+        "PUT" => Some(&path_item.put),
+        "POST" => Some(&path_item.post),
+        "DELETE" => Some(&path_item.delete),
+        "OPTIONS" => Some(&path_item.options),
+        "HEAD" => Some(&path_item.head),
+        "PATCH" => Some(&path_item.patch),
+        "TRACE" => Some(&path_item.trace),
+        _ => None,
+    }
 }
 
 /// Get the method-specific operation slot from a PathItem (mutable).
@@ -475,16 +493,25 @@ impl OpenApiBuilder {
             None
         };
 
+        let tag_strategy = config.tag_strategy.clone();
+        let operation_id_strategy = config.operation_id_strategy.clone();
+        let operation_id_overrides = config.operation_id_overrides.clone();
+        let envelope_config = config.envelope_config.clone();
+
         Self {
             prefix: prefix.to_string(),
             config: config.clone(),
+            tag_strategy,
             tags_overrides,
             compiled_templates,
             spec,
-            examples_store: HashMap::new(),
-            req_examples_store: HashMap::new(),
+            examples_store: BTreeMap::new(),
+            req_examples_store: BTreeMap::new(),
             max_examples: config.max_examples,
             redactor,
+            operation_id_strategy,
+            operation_id_overrides,
+            envelope_config,
         }
     }
 
@@ -639,9 +666,35 @@ impl OpenApiBuilder {
             ..Operation::default()
         };
 
-        if let Some(tag) = extract_tag(&template_path, &self.tags_overrides) {
-            operation.tags = vec![tag];
+        match &self.tag_strategy {
+            crate::tag_rules::TagStrategy::Legacy => {
+                if let Some(tag) = extract_tag(&template_path, &self.tags_overrides) {
+                    operation.tags = vec![tag];
+                }
+            }
+            crate::tag_rules::TagStrategy::None => {
+                // suppress tags — leave operation.tags empty
+            }
+            crate::tag_rules::TagStrategy::PathSegment { .. }
+            | crate::tag_rules::TagStrategy::Rules { .. } => {
+                if let Some(tag) = crate::tag_rules::resolve_tag(&self.tag_strategy, &template_path)
+                {
+                    operation.tags = vec![tag];
+                }
+            }
         }
+
+        let override_key = format!("{} {}", method, template_path);
+        let op_id = if let Some(id) = self.operation_id_overrides.get(&override_key) {
+            Some(id.clone())
+        } else {
+            crate::operation_id::derive_operation_id(
+                &method,
+                &template_path,
+                &self.operation_id_strategy,
+            )
+        };
+        operation.operation_id = op_id;
 
         if !self.config.suppress_params {
             let mut parameters: Vec<ReferenceOr<openapiv3::Parameter>> = Vec::new();
@@ -730,7 +783,169 @@ impl OpenApiBuilder {
 
     /// Get the assembled OpenAPI spec.
     pub fn build(mut self) -> OpenAPI {
-        for ((path, method, status), examples) in self.examples_store.drain() {
+        if !matches!(
+            self.operation_id_strategy,
+            crate::operation_id::OperationIdStrategy::None
+        ) {
+            let mut ops: Vec<(String, String, Option<String>)> = Vec::new();
+            for (path, path_ref) in &self.spec.paths.paths {
+                if let ReferenceOr::Item(path_item) = path_ref {
+                    for method in &[
+                        "GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE",
+                    ] {
+                        if let Some(Some(op)) = get_operation_ref(path_item, method) {
+                            ops.push((path.clone(), method.to_string(), op.operation_id.clone()));
+                        }
+                    }
+                }
+            }
+            crate::operation_id::resolve_collisions(&mut ops);
+            for (path, method, resolved_id) in ops {
+                if let Some(ReferenceOr::Item(path_item)) = self.spec.paths.paths.get_mut(&path) {
+                    if let Some(slot) = get_operation_mut(path_item, &method) {
+                        if let Some(op) = slot.as_mut() {
+                            op.operation_id = resolved_id;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Envelope detection: MUST run before examples_store.drain() consumes raw bodies.
+        if let Some(ref envelope_cfg) = self.envelope_config {
+            let mut all_error_bodies: Vec<serde_json::Value> = Vec::new();
+            let mut components_schemas: indexmap::IndexMap<String, ReferenceOr<openapiv3::Schema>> =
+                indexmap::IndexMap::new();
+
+            struct EnvelopeChange {
+                path: String,
+                method: String,
+                success_name: String,
+                success_schema: openapiv3::Schema,
+                one_of: ReferenceOr<openapiv3::Schema>,
+            }
+            let mut changes: Vec<EnvelopeChange> = Vec::new();
+
+            for ((path, method, status), body_examples) in &self.examples_store {
+                if *status != 200 {
+                    continue;
+                }
+                let bodies: Vec<serde_json::Value> =
+                    body_examples.iter().map(|(_, v)| v.clone()).collect();
+                let (_, error_bodies) =
+                    crate::envelope::group_bodies(&bodies, &envelope_cfg.discriminator_field);
+
+                if error_bodies.is_empty() {
+                    continue;
+                }
+
+                all_error_bodies.extend(error_bodies.iter().cloned());
+
+                let op_id = self
+                    .spec
+                    .paths
+                    .paths
+                    .get(path.as_str())
+                    .and_then(|p| {
+                        if let ReferenceOr::Item(pi) = p {
+                            Some(pi)
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|pi| get_operation_ref(pi, method))
+                    .and_then(|s| s.as_ref())
+                    .and_then(|op| op.operation_id.as_deref().map(String::from));
+
+                let success_schema = {
+                    let path_ref = self.spec.paths.paths.get(path.as_str());
+                    let path_item = match path_ref {
+                        Some(ReferenceOr::Item(pi)) => pi,
+                        _ => continue,
+                    };
+                    let op = match get_operation_ref(path_item, method) {
+                        Some(Some(op)) => op,
+                        _ => continue,
+                    };
+                    let resp = match op.responses.responses.get(&StatusCode::Code(200)) {
+                        Some(ReferenceOr::Item(r)) => r,
+                        _ => continue,
+                    };
+                    let mt = match resp.content.values().next() {
+                        Some(mt) => mt,
+                        None => continue,
+                    };
+                    match &mt.schema {
+                        Some(ReferenceOr::Item(schema)) => schema.clone(),
+                        _ => continue,
+                    }
+                };
+
+                let success_name = crate::envelope::success_component_name(
+                    op_id.as_deref(),
+                    path,
+                    method,
+                    &envelope_cfg.success_suffix,
+                );
+
+                let success_ref_str = format!("#/components/schemas/{success_name}");
+                let error_ref_str = "#/components/schemas/ApiError".to_string();
+                let one_of = crate::envelope::build_one_of_schema(
+                    &success_ref_str,
+                    &error_ref_str,
+                    &envelope_cfg.discriminator_field,
+                );
+
+                changes.push(EnvelopeChange {
+                    path: path.clone(),
+                    method: method.clone(),
+                    success_name,
+                    success_schema,
+                    one_of,
+                });
+            }
+
+            for change in changes {
+                components_schemas.insert(
+                    change.success_name,
+                    ReferenceOr::Item(change.success_schema),
+                );
+
+                if let Some(ReferenceOr::Item(path_item)) =
+                    self.spec.paths.paths.get_mut(change.path.as_str())
+                {
+                    if let Some(slot) = get_operation_mut(path_item, &change.method) {
+                        if let Some(op) = slot.as_mut() {
+                            if let Some(ReferenceOr::Item(resp)) =
+                                op.responses.responses.get_mut(&StatusCode::Code(200))
+                            {
+                                if let Some(mt) = resp.content.values_mut().next() {
+                                    mt.schema = Some(change.one_of);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !all_error_bodies.is_empty() {
+                let api_error_schema =
+                    crate::envelope::infer_api_error(&all_error_bodies, envelope_cfg);
+                components_schemas
+                    .insert("ApiError".to_string(), ReferenceOr::Item(api_error_schema));
+            }
+
+            if !components_schemas.is_empty() {
+                let components = self
+                    .spec
+                    .components
+                    .get_or_insert_with(openapiv3::Components::default);
+                for (name, schema) in components_schemas {
+                    components.schemas.insert(name, schema);
+                }
+            }
+        }
+        for ((path, method, status), examples) in self.examples_store.into_iter() {
             let Some(ReferenceOr::Item(path_item)) = self.spec.paths.paths.get_mut(&path) else {
                 continue;
             };
@@ -770,7 +985,7 @@ impl OpenApiBuilder {
             }
             media_type.examples = ex_map;
         }
-        for ((path, method, content_type), examples) in self.req_examples_store.drain() {
+        for ((path, method, content_type), examples) in self.req_examples_store.into_iter() {
             let Some(ReferenceOr::Item(path_item)) = self.spec.paths.paths.get_mut(&path) else {
                 continue;
             };
@@ -808,6 +1023,13 @@ impl OpenApiBuilder {
             }
             media_type.examples = ex_map;
         }
+
+        self.spec.paths.paths.sort_keys();
+
+        if let Some(ref mut components) = self.spec.components {
+            components.schemas.sort_keys();
+        }
+
         self.spec
     }
 }
@@ -910,18 +1132,9 @@ mod tests {
     fn test_config() -> Config {
         Config {
             prefix: "https://api.example.com".to_string(),
-            openapi_title: None,
             openapi_version: "1.0.0".to_string(),
-            exclude_headers: vec![],
-            exclude_cookies: vec![],
-            include_headers: false,
-            ignore_images: false,
-            suppress_params: false,
-            tags_overrides: None,
-            skip_options: false,
             max_examples: 5,
-            redact_patterns: vec![],
-            redact_fields: vec![],
+            ..Default::default()
         }
     }
 

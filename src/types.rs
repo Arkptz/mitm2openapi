@@ -1,3 +1,8 @@
+use crate::envelope::EnvelopeConfig;
+use crate::operation_id::OperationIdStrategy;
+use crate::tag_rules::TagStrategy;
+use std::collections::HashMap;
+
 /// Unified interface for captured HTTP requests from different sources (HAR, mitmproxy).
 pub trait CapturedRequest {
     fn get_url(&self) -> &str;
@@ -12,7 +17,7 @@ pub trait CapturedRequest {
 }
 
 /// Configuration for OpenAPI generation, derived from CLI arguments.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     pub prefix: String,
     pub openapi_title: Option<String>,
@@ -27,4 +32,8 @@ pub struct Config {
     pub max_examples: usize,
     pub redact_patterns: Vec<String>,
     pub redact_fields: Vec<String>,
+    pub tag_strategy: TagStrategy,
+    pub operation_id_strategy: OperationIdStrategy,
+    pub operation_id_overrides: HashMap<String, String>,
+    pub envelope_config: Option<EnvelopeConfig>,
 }

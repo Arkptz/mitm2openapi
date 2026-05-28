@@ -1,0 +1,4 @@
+x-path-templates:
+  - /api/v1/contract/ticker
+  - /api/v1/contract/fair_price/{symbol}
+  - /api/v1/private/order/place

@@ -15,7 +15,7 @@ pub enum Command {
     /// Discover API endpoints from captured traffic and produce a templates file
     Discover(DiscoverArgs),
     /// Generate an OpenAPI specification from captured traffic using a templates file
-    Generate(GenerateArgs),
+    Generate(Box<GenerateArgs>),
 }
 
 /// Input format for traffic captures
@@ -28,6 +28,32 @@ pub enum InputFormat {
     Har,
     /// mitmproxy flow dump format
     Mitmproxy,
+}
+
+/// Tag strategy for operations
+#[derive(ValueEnum, Clone, Debug, Default)]
+pub enum TagStrategyArg {
+    /// Default: first non-param path segment (existing behavior)
+    #[default]
+    Legacy,
+    /// Suppress all tags
+    None,
+    /// Extract segment at given index
+    PathSegment,
+    /// Use regex rules file
+    Rules,
+}
+
+/// operationId strategy for operations
+#[derive(ValueEnum, Clone, Debug, Default)]
+pub enum OperationIdStrategyArg {
+    /// Do not generate operationId (default)
+    #[default]
+    None,
+    /// Derive from HTTP method + path
+    Path,
+    /// Use custom template with {method} and {path} placeholders
+    Template,
 }
 
 fn parse_byte_size(s: &str) -> Result<u64, String> {
@@ -186,9 +212,45 @@ pub struct GenerateArgs {
     #[arg(long, default_value_t = 5)]
     pub max_examples: usize,
 
-    #[arg(long, value_delimiter = ',')]
+    /// Regex pattern to redact from examples (repeat for multiple)
+    #[arg(long, value_name = "REGEX")]
     pub redact_patterns: Vec<String>,
 
+    /// Comma-separated field names to redact from examples
     #[arg(long, value_delimiter = ',')]
     pub redact_fields: Vec<String>,
+
+    #[arg(long, value_enum, default_value_t = TagStrategyArg::Legacy)]
+    pub tag_strategy: TagStrategyArg,
+
+    #[arg(long)]
+    pub tag_segment_index: Option<usize>,
+
+    #[arg(long)]
+    pub tag_rules: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = OperationIdStrategyArg::None)]
+    pub operation_id_strategy: OperationIdStrategyArg,
+
+    #[arg(long)]
+    pub operation_id_template: Option<String>,
+
+    #[arg(long)]
+    pub operation_id_overrides: Option<PathBuf>,
+
+    /// Discriminator field name for envelope detection.
+    /// When set, 200 responses with both success:true and success:false
+    /// bodies will be split into oneOf(Success, ApiError).
+    #[arg(long)]
+    pub envelope_discriminator: Option<String>,
+
+    /// Path to YAML file containing the hand-supplied ApiError schema.
+    /// If omitted, schema is inferred from captured error bodies.
+    #[arg(long)]
+    pub envelope_error_shape: Option<PathBuf>,
+
+    /// Suffix for success component names (default: "Success").
+    /// E.g., operationId "getFairPrice" → "GetFairPriceSuccess"
+    #[arg(long, default_value = "Success")]
+    pub envelope_success_component_suffix: String,
 }

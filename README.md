@@ -40,6 +40,10 @@ Credit to [@alufers](https://github.com/alufers) for the original tool that pion
 - **Auto-detection** — heuristic format detection from file content
 - **Battle-tested** — integration tests against Swagger Petstore and OWASP crAPI with `oasdiff` verification
 - **Cross-platform** — Linux, macOS, Windows pre-built binaries
+- **operationId generation** — `--operation-id-strategy path` derives stable camelCase names (e.g. `getFairPrice`, `placeOrder`); override per-operation via YAML
+- **Tag rules** — `--tag-rules file.yaml` assigns one tag per operation by regex; supports `path-segment`, `none`, and `legacy` modes
+- **Envelope detection** — `--envelope-discriminator success` splits MEXC-style `{success: bool}` envelopes into `oneOf(SuccessSchema, ApiError)` with shared `components/schemas/ApiError`
+- **Deterministic output** — paths and schemas sorted alphabetically for byte-stable diffs across runs
 
 ## Installation
 

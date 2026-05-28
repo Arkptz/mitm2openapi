@@ -1,0 +1,3 @@
+# Normalize line endings to LF for all text files.
+# This prevents CRLF/LF mismatches on Windows CI.
+* text=auto eol=lf
