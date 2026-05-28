@@ -88,6 +88,7 @@ mitm2openapi generate [OPTIONS] -i <INPUT> -t <TEMPLATES> -o <OUTPUT> -p <PREFIX
 | `--envelope-discriminator <FIELD>` | | JSON field name for discriminating success vs error |
 | `--envelope-error-shape <PATH>` | | YAML file with hand-supplied ApiError schema |
 | `--envelope-success-component-suffix <STRING>` | `Success` | Suffix for success component names |
+| `--enrichments <PATH>` / `-e` | — | path | Apply operationId-keyed YAML overlay to enrich the generated spec (requires `--operation-id-strategy`) |
 
 ## Common flag details
 
