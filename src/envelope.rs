@@ -53,7 +53,22 @@ pub fn infer_api_error(error_bodies: &[Value], config: &EnvelopeConfig) -> Schem
             schema_kind: SchemaKind::Any(openapiv3::AnySchema::default()),
         };
     }
-    merge_error_body_schemas(error_bodies)
+    let mut schema = merge_error_body_schemas(error_bodies);
+    pin_discriminator_field(&mut schema, &config.discriminator_field);
+    schema
+}
+
+fn pin_discriminator_field(schema: &mut Schema, field_name: &str) {
+    if let SchemaKind::Type(openapiv3::Type::Object(ref mut obj)) = schema.schema_kind {
+        let pinned = Schema {
+            schema_data: SchemaData::default(),
+            schema_kind: SchemaKind::Type(openapiv3::Type::Boolean(openapiv3::BooleanType {
+                enumeration: vec![Some(false)],
+            })),
+        };
+        obj.properties
+            .insert(field_name.to_string(), ReferenceOr::Item(Box::new(pinned)));
+    }
 }
 
 /// Merge multiple error body JSON values into a single schema.
@@ -265,6 +280,29 @@ mod tests {
             yaml.contains("msg:")
                 && (yaml.contains("type: string") || yaml.contains("- type: string")),
             "msg must be string (or oneOf with string) when 2/3 samples are string:\n{yaml}"
+        );
+    }
+
+    #[test]
+    fn inferred_api_error_includes_discriminator_field_pinned_to_false() {
+        let bodies = vec![
+            json!({"success": false, "code": 401, "msg": "Not logged in"}),
+            json!({"success": false, "code": 99999, "msg": "System busy"}),
+        ];
+        let config = EnvelopeConfig {
+            discriminator_field: "success".to_string(),
+            error_shape: None,
+            success_suffix: "Success".to_string(),
+        };
+        let schema = infer_api_error(&bodies, &config);
+        let yaml = serde_yaml_ng::to_string(&schema).unwrap();
+        assert!(
+            yaml.contains("success:"),
+            "discriminator field must be in ApiError:\n{yaml}"
+        );
+        assert!(
+            yaml.contains("enum:") && yaml.contains("- false"),
+            "discriminator field must be pinned with enum: [false]:\n{yaml}"
         );
     }
 
