@@ -212,7 +212,7 @@ pub struct GenerateArgs {
     #[arg(long, default_value_t = 5)]
     pub max_examples: usize,
 
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long)]
     pub redact_patterns: Vec<String>,
 
     #[arg(long, value_delimiter = ',')]

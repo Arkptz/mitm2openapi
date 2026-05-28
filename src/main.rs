@@ -257,6 +257,17 @@ fn run(cli: Cli) -> Result<i32> {
                 envelope_config,
             };
 
+            if !config.redact_patterns.is_empty() || !config.redact_fields.is_empty() {
+                if let Err(e) = mitm2openapi::redact::Redactor::new(
+                    &config.redact_patterns,
+                    &config.redact_fields,
+                ) {
+                    let msg = format!("invalid redact pattern: {e}");
+                    warn!(error = %e, "Invalid redact pattern");
+                    *report.events.parse_error.entry(msg).or_insert(0) += 1;
+                }
+            }
+
             let mut builder = OpenApiBuilder::new(&args.prefix, &config, active_templates);
             let mut count = 0usize;
             for req_result in req_iter {
