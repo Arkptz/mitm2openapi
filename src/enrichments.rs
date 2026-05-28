@@ -121,8 +121,145 @@ pub fn load_overlay(path: &Path) -> Result<Overlay> {
     Ok(overlay)
 }
 
-pub fn apply_enrichments(_spec: &mut OpenAPI, _overlay: &Overlay, _mode: ApplyMode) -> Result<()> {
-    // STUB — will be implemented in Task 3
+fn find_operation_mut<'a>(
+    spec: &'a mut OpenAPI,
+    target_id: &str,
+) -> Option<&'a mut openapiv3::Operation> {
+    for (_path, path_ref) in &mut spec.paths.paths {
+        if let openapiv3::ReferenceOr::Item(path_item) = path_ref {
+            for op in [
+                &mut path_item.get,
+                &mut path_item.put,
+                &mut path_item.post,
+                &mut path_item.delete,
+                &mut path_item.options,
+                &mut path_item.head,
+                &mut path_item.patch,
+                &mut path_item.trace,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if op.operation_id.as_deref() == Some(target_id) {
+                    return Some(op);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn apply_operation_enrichment(op: &mut openapiv3::Operation, enrichment: &OperationOverlay) {
+    if let Some(s) = &enrichment.summary {
+        op.summary = Some(s.clone());
+    }
+    if let Some(d) = &enrichment.description {
+        op.description = Some(d.clone());
+    }
+    if let Some(d) = enrichment.deprecated {
+        op.deprecated = d;
+    }
+    if let Some(tags) = &enrichment.tags {
+        op.tags = tags.clone();
+    }
+
+    for (key, val) in &enrichment.extensions {
+        op.extensions.insert(key.clone(), val.clone());
+    }
+
+    if let Some(responses) = &enrichment.responses {
+        for (status_str, resp_overlay) in responses {
+            let status_code: u16 = match status_str.parse() {
+                Ok(n) => n,
+                Err(_) => {
+                    tracing::warn!(
+                        event = "non_numeric_response_status",
+                        status = %status_str,
+                        "non-numeric response status in enrichment overlay, skipping"
+                    );
+                    continue;
+                }
+            };
+            let key = openapiv3::StatusCode::Code(status_code);
+            if let Some(openapiv3::ReferenceOr::Item(resp)) = op.responses.responses.get_mut(&key) {
+                if let Some(d) = &resp_overlay.description {
+                    resp.description = d.clone();
+                }
+            } else {
+                tracing::warn!(
+                    event = "enrichment_response_status_not_found",
+                    status = %status_str,
+                    "response status not found in operation, skipping"
+                );
+            }
+        }
+    }
+}
+
+pub fn apply_enrichments(spec: &mut OpenAPI, overlay: &Overlay, mode: ApplyMode) -> Result<()> {
+    // 1. Info merge
+    if let Some(info_overlay) = &overlay.info {
+        if let Some(title) = &info_overlay.title {
+            spec.info.title = title.clone();
+        }
+        if let Some(desc) = &info_overlay.description {
+            spec.info.description = Some(desc.clone());
+        }
+        if let Some(ver) = &info_overlay.version {
+            spec.info.version = ver.clone();
+        }
+    }
+
+    // 2. Operations merge
+    for (op_id, enrichment) in &overlay.operations {
+        let found = find_operation_mut(spec, op_id);
+        match found {
+            None => match mode {
+                ApplyMode::Lenient => {
+                    tracing::warn!(
+                        event = "unknown_enrichment_operation_id",
+                        operation_id = %op_id,
+                        "overlay references unknown operationId, skipping"
+                    );
+                }
+                ApplyMode::Strict => {
+                    anyhow::bail!("unknown operationId '{op_id}' in enrichments overlay");
+                }
+            },
+            Some(op) => {
+                apply_operation_enrichment(op, enrichment);
+            }
+        }
+    }
+
+    // 3. Components merge
+    if let Some(comp_overlay) = &overlay.components {
+        if let Some(schema_overlays) = &comp_overlay.schemas {
+            if let Some(ref mut components) = spec.components {
+                for (name, schema_overlay) in schema_overlays {
+                    if let Some(schema_ref) = components.schemas.get_mut(name) {
+                        if let openapiv3::ReferenceOr::Item(schema) = schema_ref {
+                            if let Some(desc) = &schema_overlay.description {
+                                schema.schema_data.description = Some(desc.clone());
+                            }
+                        } else {
+                            tracing::warn!(
+                                event = "enrichment_schema_is_ref",
+                                schema = %name,
+                                "schema is a $ref, skipping enrichment"
+                            );
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    event = "no_components_in_spec",
+                    "spec has no components section, skipping component enrichments"
+                );
+            }
+        }
+    }
+
     Ok(())
 }
 
