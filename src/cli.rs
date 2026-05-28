@@ -212,9 +212,11 @@ pub struct GenerateArgs {
     #[arg(long, default_value_t = 5)]
     pub max_examples: usize,
 
-    #[arg(long)]
+    /// Regex pattern to redact from examples (repeat for multiple)
+    #[arg(long, value_name = "REGEX")]
     pub redact_patterns: Vec<String>,
 
+    /// Comma-separated field names to redact from examples
     #[arg(long, value_delimiter = ',')]
     pub redact_fields: Vec<String>,
 
