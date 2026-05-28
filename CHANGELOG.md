@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/Arkptz/mitm2openapi/compare/v0.6.0...v0.7.0) - 2026-05-28
+
+### Added
+
+- *(generate)* integrate envelope detection into build()
+- *(generate)* integrate operationId strategy into builder
+- *(cli)* add envelope detection CLI flags
+- *(generate)* integrate tag rules strategy into builder
+- add envelope module for discriminator-based response splitting
+- *(cli)* add operationId and tag strategy CLI flags
+- add operation_id module with camelCase derivation and collision resolution
+- add tag_rules module with regex-based tag matching
+
+### Fixed
+
+- *(cli)* show correct value name and help text for --redact-patterns
+- *(cli)* stop splitting --redact-patterns on comma, fail invalid regex under --strict
+- *(envelope)* pin discriminator field to boolean enum:[false] in ApiError
+- *(envelope)* merge all error bodies in infer_api_error, not just first
+- *(test)* normalize CRLF in snapshot comparison, add .gitattributes eol=lf
+- *(output)* sort maps for deterministic YAML output
+
+### Other
+
+- *(changelog)* add bugfix entries from MEXC integration testing
+- document operationId, tags, and envelope features
+- *(integration)* add end-to-end test for operationId, tags, and envelope
+- add snapshot test pinning current generate output
+
 ### Added
 
 - *(generate)* add `--operation-id-strategy {none,path,template}` flag for stable operationId generation
