@@ -55,6 +55,10 @@ fn snapshot_compat() {
         )
     });
 
+    // Normalize line endings for cross-platform comparison (CRLF → LF on Windows CI)
+    let actual = actual.replace("\r\n", "\n");
+    let expected = expected.replace("\r\n", "\n");
+
     if actual != expected {
         let actual_lines: Vec<&str> = actual.lines().collect();
         let expected_lines: Vec<&str> = expected.lines().collect();
