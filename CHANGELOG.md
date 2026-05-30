@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/Arkptz/mitm2openapi/compare/v0.7.0...v0.8.0) - 2026-05-30
+
+### Fixed
+
+- *(docs)* escape enum:[false] in changelog to fix mdbook linkcheck
+
+### Other
+
+- Merge pull request #53 from Arkptz/feat/enrichments
+
 ## [0.7.0](https://github.com/Arkptz/mitm2openapi/compare/v0.6.0...v0.7.0) - 2026-05-28
 
 ### Added
