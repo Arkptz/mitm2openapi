@@ -253,4 +253,8 @@ pub struct GenerateArgs {
     /// E.g., operationId "getFairPrice" → "GetFairPriceSuccess"
     #[arg(long, default_value = "Success")]
     pub envelope_success_component_suffix: String,
+
+    /// Apply overlay YAML (operationId-keyed) to enrich generated spec
+    #[arg(long, short = 'e')]
+    pub enrichments: Option<PathBuf>,
 }

@@ -334,3 +334,62 @@ mitm2openapi generate ... \
   --envelope-discriminator success \
   --envelope-error-shape api-error.yaml
 ```
+
+## Enriching generated specs
+
+Auto-generated summaries like `GET /api/v1/contract/fair_price/{symbol}` aren't ideal for documentation or SDK generation. Use `--enrichments` to apply a YAML overlay with human-written metadata:
+
+```yaml
+# enrichments.yaml
+info:
+  description: |
+    Reverse-engineered MEXC web API.
+    Source: captured browser traffic.
+
+operations:
+  getFairPrice:
+    summary: Get fair price for a futures contract
+    description: |
+      Returns the mark price used for liquidation calculations.
+    x-requires-auth: false
+    x-rate-limit: "10/s"
+    responses:
+      "200":
+        description: Fair price payload
+
+  getAssets:
+    summary: List futures account balances
+    x-requires-auth: true
+
+components:
+  schemas:
+    ApiError:
+      description: |
+        MEXC envelope error response.
+        HTTP status is always 200; failure is signalled by success=false.
+```
+
+```sh
+mitm2openapi generate \
+  -i capture.har -t templates.yaml -o openapi.yaml \
+  -p https://api.example.com \
+  --operation-id-strategy path \
+  --enrichments enrichments.yaml
+```
+
+### Merge semantics
+
+| Scope | Rule |
+|-------|------|
+| `info.*` | Overlay wins per-key (title, description, version) |
+| `operations.<opId>.summary`, `description`, `deprecated` | Overlay wins |
+| `operations.<opId>.tags` | Overlay replaces entire list |
+| `operations.<opId>.x-*` | Passed through verbatim |
+| `operations.<opId>.responses.<status>.description` | Overlay wins |
+| `components.schemas.<name>.description` | Overlay wins (properties/type untouched) |
+| Operation in overlay but not in spec | Warning (error under `--strict`) |
+| Operation in spec but not in overlay | Left untouched |
+
+> **Note**: operationIds in the overlay must match the final IDs after collision resolution. If two operations produce the same base ID, one gets a `_2` suffix. Run `generate` once without `--enrichments` to see the resolved IDs.
+
+The `--enrichments` flag requires `--operation-id-strategy` to be set (not `none`), since the overlay keys operations by operationId.

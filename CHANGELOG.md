@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(generate)* add `--envelope-error-shape <path>` for hand-supplied ApiError schema
 - *(generate)* add `--envelope-success-component-suffix <string>` (default `Success`)
 - *(output)* sort paths and component schemas alphabetically for deterministic YAML output
+- *(generate)* add `--enrichments <PATH>` (`-e`) flag for applying operationId-keyed YAML overlays with human-written metadata (summaries, descriptions, tags, `x-` extensions, response descriptions, component schema descriptions)
 
 ### Fixed
 

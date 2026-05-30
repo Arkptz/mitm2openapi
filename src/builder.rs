@@ -298,7 +298,10 @@ fn parse_body(body: &[u8], content_type: Option<&str>) -> Option<(String, serde_
     None
 }
 
-fn get_operation_ref<'a>(path_item: &'a PathItem, method: &str) -> Option<&'a Option<Operation>> {
+pub(crate) fn get_operation_ref<'a>(
+    path_item: &'a PathItem,
+    method: &str,
+) -> Option<&'a Option<Operation>> {
     match method.to_uppercase().as_str() {
         "GET" => Some(&path_item.get),
         "PUT" => Some(&path_item.put),
@@ -314,7 +317,7 @@ fn get_operation_ref<'a>(path_item: &'a PathItem, method: &str) -> Option<&'a Op
 
 /// Get the method-specific operation slot from a PathItem (mutable).
 /// Returns `None` for HTTP methods not supported by the OpenAPI spec.
-fn get_operation_mut<'a>(
+pub(crate) fn get_operation_mut<'a>(
     path_item: &'a mut PathItem,
     method: &str,
 ) -> Option<&'a mut Option<Operation>> {

@@ -286,7 +286,38 @@ fn run(cli: Cli) -> Result<i32> {
                 }
             }
             info!(count, path = %args.input.display(), "Processed requests");
-            let spec = builder.build();
+            let mut spec = builder.build();
+
+            if let Some(enrichments_path) = &args.enrichments {
+                if matches!(args.operation_id_strategy, OperationIdStrategyArg::None) {
+                    bail!("--enrichments requires --operation-id-strategy to be set (not 'none')");
+                }
+                let overlay = mitm2openapi::enrichments::load_overlay(enrichments_path)
+                    .with_context(|| {
+                        format!(
+                            "failed to load enrichments from {}",
+                            enrichments_path.display()
+                        )
+                    })?;
+                let mode = if strict {
+                    mitm2openapi::enrichments::ApplyMode::Strict
+                } else {
+                    mitm2openapi::enrichments::ApplyMode::Lenient
+                };
+                if let Err(e) =
+                    mitm2openapi::enrichments::apply_enrichments(&mut spec, &overlay, mode)
+                {
+                    if strict {
+                        bail!("enrichments error: {e}");
+                    }
+                    warn!(error = %e, "Enrichments warning");
+                    *report
+                        .events
+                        .parse_error
+                        .entry(format!("enrichments: {e}"))
+                        .or_insert(0) += 1;
+                }
+            }
 
             let path_count = spec.paths.paths.len();
             report.result.paths_in_spec = path_count as u64;
