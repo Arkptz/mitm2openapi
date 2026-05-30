@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/Arkptz/mitm2openapi/compare/v0.7.0...v0.8.0) - 2026-05-30
+
+### Added
+
+- *(generate)* add `--enrichments <PATH>` (`-e`) flag for applying operationId-keyed YAML overlays with human-written metadata (summaries, descriptions, tags, `x-` extensions, response descriptions, component schema descriptions)
+
 ## [0.7.0](https://github.com/Arkptz/mitm2openapi/compare/v0.6.0...v0.7.0) - 2026-05-28
 
 ### Added
