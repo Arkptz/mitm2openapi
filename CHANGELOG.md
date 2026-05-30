@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/Arkptz/mitm2openapi/compare/v0.7.0...v0.7.1) - 2026-05-30
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.7.0](https://github.com/Arkptz/mitm2openapi/compare/v0.6.0...v0.7.0) - 2026-05-28
 
 ### Added
