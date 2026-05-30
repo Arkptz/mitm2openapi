@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(cli)* show correct value name and help text for --redact-patterns
 - *(cli)* stop splitting --redact-patterns on comma, fail invalid regex under --strict
-- *(envelope)* pin discriminator field to boolean enum:[false] in ApiError
+- *(envelope)* pin discriminator field to boolean `enum: [false]` in ApiError
 - *(envelope)* merge all error bodies in infer_api_error, not just first
 - *(test)* normalize CRLF in snapshot comparison, add .gitattributes eol=lf
 - *(output)* sort maps for deterministic YAML output
