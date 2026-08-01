@@ -48,7 +48,7 @@ jobs:
 
       - name: Install Python mitmproxy2swagger
         run: |
-          pip install --user "mitmproxy<12" "ruamel.yaml<0.19" "mitmproxy2swagger==0.14.0"
+          pip install --user "mitmproxy2swagger==0.15.0"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           python -m pip show mitmproxy2swagger | head -3
 
