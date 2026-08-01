@@ -8,6 +8,10 @@ on:
       - "ci/demo/**"
       - "Cargo.toml"
       - "Cargo.lock"
+  pull_request:
+    paths:
+      - "ci/demo/**"
+      - ".github/workflows/demo-gif.yml"
   workflow_dispatch:
 
 permissions:
@@ -24,6 +28,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -191,7 +197,9 @@ jobs:
 
       # Auto-commit
       - name: Auto-commit demo artifacts
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
+          branch: ${{ github.head_ref || github.ref_name }}
           commit_message: "docs: regenerate demo.gif [skip ci]"
           file_pattern: "docs/demo.gif docs/demo.mp4 README.md"

@@ -26,7 +26,6 @@ test.beforeAll(() => {
     execSync(
       "docker run -d --name swagger-ui -p 8088:8080 " +
         "-e URL=./openapi.yaml " +
-        "-v ${PWD}/out/openapi.yaml:/usr/share/nginx/html/openapi.yaml:ro " +
         "swaggerapi/swagger-ui",
       { stdio: "inherit" },
     );
@@ -47,6 +46,14 @@ test.beforeAll(() => {
     if (!ready) {
       throw new Error("Swagger UI did not become ready in 30s");
     }
+
+    // Not a bind-mount: nginx workers run as `nginx` and can't read a mount
+    // that keeps the host uid/perms, which surfaces as a 403 in the UI.
+    const specPath = "/usr/share/nginx/html/openapi.yaml";
+    execSync(`docker cp out/openapi.yaml swagger-ui:${specPath}`);
+    execSync(`docker exec -u root swagger-ui chmod 644 ${specPath}`);
+
+    execSync("curl -sf http://localhost:8088/openapi.yaml > /dev/null");
   } catch (e) {
     console.error("Failed to start Swagger UI:", e);
     throw e;

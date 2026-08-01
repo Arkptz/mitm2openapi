@@ -7,6 +7,9 @@ on:
       - 'src/**'
       - 'Cargo.toml'
       - '.github/workflows/bench.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/bench.yml'
   schedule:
     - cron: '0 7 * * 1'
   workflow_dispatch:
@@ -28,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -135,7 +140,9 @@ jobs:
           retention-days: 90
 
       - name: Update docs/benchmarks.md
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        if: >-
+          github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
         run: |
           mkdir -p docs
           {
@@ -150,4 +157,4 @@ jobs:
           git config user.email arkptz@gmail.com
           git add docs/benchmarks.md
           git commit -m "docs(bench): refresh benchmark results"
-          git push
+          git push origin HEAD:${{ github.head_ref || github.ref_name }}
