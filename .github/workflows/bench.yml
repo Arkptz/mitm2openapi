@@ -157,4 +157,7 @@ jobs:
           git config user.email arkptz@gmail.com
           git add docs/benchmarks.md
           git commit -m "docs(bench): refresh benchmark results"
-          git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          # demo-gif.yml pushes to the same branch and can land first.
+          git pull --rebase --autostash origin "$BRANCH"
+          git push origin HEAD:"$BRANCH"

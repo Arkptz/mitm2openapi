@@ -196,6 +196,11 @@ jobs:
           fi
 
       # Auto-commit
+      - name: Rebase onto branch tip
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        # bench.yml pushes to the same branch and can land first.
+        run: git pull --rebase --autostash origin "${{ github.head_ref || github.ref_name }}"
+
       - name: Auto-commit demo artifacts
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: stefanzweifel/git-auto-commit-action@v7
