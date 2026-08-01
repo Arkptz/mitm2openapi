@@ -25,8 +25,8 @@ test.beforeAll(() => {
     execSync("docker rm -f swagger-ui 2>/dev/null || true");
     execSync(
       "docker run -d --name swagger-ui -p 8088:8080 " +
-        "-e SWAGGER_JSON=/spec/openapi.yaml " +
-        "-v ${PWD}/out:/spec " +
+        "-e URL=./openapi.yaml " +
+        "-v ${PWD}/out/openapi.yaml:/usr/share/nginx/html/openapi.yaml:ro " +
         "swaggerapi/swagger-ui",
       { stdio: "inherit" },
     );
