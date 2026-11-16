@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2](https://github.com/Arkptz/mitm2openapi/compare/v0.8.1...v0.8.2) - 2026-08-08
+
+### Other
+
+- *(deps)* bump the all-cargo group with 2 updates ([#67](https://github.com/Arkptz/mitm2openapi/pull/67))
+
 ## [0.8.1](https://github.com/Arkptz/mitm2openapi/compare/v0.8.0...v0.8.1) - 2026-08-01
 
 ### Other
